@@ -1,0 +1,1934 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+    <title>MVP評価ツール</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.39.0"></script>
+    <style>
+    @media (max-width: 768px) {
+        /* 全体レイアウト */
+        [style*="display:flex;min-height:100vh"],
+        [style*="display:flex; min-height:100vh"] { flex-direction: column !important; }
+
+        /* サイドバー：上部の細いナビバーに */
+        .sidebar {
+            width: 100% !important;
+            min-height: auto !important;
+            height: auto !important;
+            position: sticky !important;
+            top: 0 !important;
+            z-index: 100 !important;
+            flex-direction: column !important;
+            padding: 8px !important;
+            gap: 4px !important;
+        }
+        .sidebar h2 { display: none !important; }
+
+        /* モード切替を横並び */
+        .sidebar .mode-toggle {
+            width: 100% !important;
+            margin-bottom: 4px !important;
+        }
+
+        /* ナビボタンを横スクロール */
+        .sidebar nav {
+            display: flex !important;
+            flex-direction: row !important;
+            flex-wrap: nowrap !important;
+            overflow-x: auto !important;
+            gap: 4px !important;
+            width: 100% !important;
+            padding-bottom: 4px !important;
+        }
+        .sidebar nav button {
+            width: auto !important;
+            min-width: fit-content !important;
+            padding: 8px 12px !important;
+            font-size: 12px !important;
+            white-space: nowrap !important;
+            flex-shrink: 0 !important;
+        }
+
+        /* ログアウトボタン */
+        .sidebar > button[onclick*="logout"] {
+            width: 100% !important;
+            margin-top: 4px !important;
+        }
+
+        /* メインコンテンツ */
+        .main-content {
+            margin-left: 0 !important;
+            width: 100% !important;
+            overflow-x: hidden !important;
+        }
+
+        /* グリッドを1列に */
+        [style*="grid-template-columns"] { grid-template-columns: 1fr !important; }
+
+        /* パディング・フォント調整 */
+        [style*="padding:32px"] { padding: 12px !important; }
+        [style*="padding: 32px"] { padding: 12px !important; }
+        [style*="font-size:32px"] { font-size: 20px !important; }
+        [style*="font-size: 32px"] { font-size: 20px !important; }
+        [style*="font-size:40px"] { font-size: 28px !important; }
+
+        /* 入力・ボタン */
+        select, input[type="text"], input[type="password"], input[type="date"], input[type="number"] {
+            font-size: 16px !important;
+            width: 100% !important;
+        }
+        button { min-height: 44px !important; }
+
+        /* テーブルをスクロール可能に */
+        table { font-size: 12px !important; }
+        th, td { padding: 6px 8px !important; }
+
+        /* モーダル */
+        #modal { align-items: flex-start !important; padding-top: 20px !important; }
+        #modal > div { 
+            padding: 16px !important; 
+            margin: 8px !important; 
+            max-width: calc(100vw - 16px) !important;
+            width: 100% !important;
+        }
+
+        /* 横スクロール防止 */
+        body { overflow-x: hidden !important; }
+    }
+    </style>
+    </head>
+<body class="bg-gray-100">
+<div id="loading" style="position:fixed;top:0;left:0;width:100%;height:100%;background:#1e3a8a;z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;color:white;">
+    <div style="font-size:48px;margin-bottom:16px;">📊</div>
+    <div style="font-size:22px;font-weight:bold;margin-bottom:12px;">MVP評価ツール</div>
+    <div style="font-size:14px;opacity:0.8;margin-bottom:24px;">データを読み込んでいます...</div>
+    <div style="width:200px;height:4px;background:rgba(255,255,255,0.2);border-radius:2px;overflow:hidden;">
+        <div id="loadingBar" style="width:0%;height:100%;background:#60a5fa;border-radius:2px;transition:width 0.3s;"></div>
+    </div>
+</div>
+<div id="app"></div>
+<div id="modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center;overflow-y:auto;">
+    <div style="background:white;border-radius:8px;box-shadow:0 10px 25px rgba(0,0,0,0.2);padding:32px;max-width:672px;max-height:90vh;overflow-y:auto;" id="modalContent"></div>
+</div>
+
+<script>
+
+// ================== Supabase 初期化 ==================
+let supabase = null;
+const SUPABASE_URL = 'https://vuyvzsabrftfghgcahhw.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_-vUGfr9XtBCIKeQ1TSJZHg_g-3EA6pX';
+
+function initSupabase() {
+    if (!window.supabase) {
+        console.error('❌ Supabase ライブラリが読み込まれていません');
+        return false;
+    }
+    try {
+        supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        console.log('✅ Supabase を初期化しました');
+        return true;
+    } catch (err) {
+        console.error('❌ Supabase 初期化エラー:', err);
+        return false;
+    }
+}
+
+// ページ読み込み後に初期化＋Supabaseからデータ取得
+setTimeout(() => {
+    const ok = initSupabase();
+    if (ok) {
+        loadAllFromSupabase();
+    }
+}, 600);
+
+async function loadAllFromSupabase() {
+    document.getElementById('loadingBar').style.width = '30%';
+    await loadSettingsFromSupabase();
+    document.getElementById('loadingBar').style.width = '70%';
+    await loadEvaluationsFromSupabase();
+    document.getElementById('loadingBar').style.width = '100%';
+    setTimeout(() => {
+        document.getElementById('loading').style.display = 'none';
+    }, 300);
+}
+
+// マスターデータをSupabaseから読み込む
+async function loadSettingsFromSupabase() {
+    try {
+        const { data, error } = await supabase.from('settings').select('*');
+        if (error) { console.error('❌ Settings読み込みエラー:', error); return; }
+        if (!data || data.length === 0) {
+            // 初回：現在のローカルデータをSupabaseに保存
+            await saveSettingsToSupabase();
+            return;
+        }
+        const row = data[0];
+        const settings = row.data;
+        if (settings) {
+            if (settings.departments?.length) app.departments = settings.departments;
+            if (settings.employees?.length) app.employees = settings.employees;
+            if (settings.evaluators?.length) app.evaluators = settings.evaluators;
+            if (settings.kakaricyoEmployees?.length) app.kakaricyoEmployees = settings.kakaricyoEmployees;
+            if (settings.items?.length) app.items = settings.items;
+            if (settings.periods?.length) app.periods = settings.periods;
+            if (settings.users?.length) app.users = settings.users;
+            if (!app.period && app.periods.length > 0) app.period = app.periods[0].id;
+            console.log('✅ マスターデータをSupabaseから読み込みました');
+        }
+    } catch (err) {
+        console.error('❌ Settings読み込み例外:', err);
+    }
+}
+
+// マスターデータをSupabaseに保存
+async function saveSettingsToSupabase() {
+    if (!supabase) return;
+    try {
+        const settings = {
+            departments: app.departments,
+            employees: app.employees,
+            evaluators: app.evaluators,
+            kakaricyoEmployees: app.kakaricyoEmployees,
+            items: app.items,
+            periods: app.periods,
+            users: app.users
+        };
+        const { error } = await supabase.from('settings').upsert({
+            id: 'master',
+            data: settings,
+            updated_at: new Date().toISOString()
+        });
+        if (error) { console.error('❌ Settings保存エラー:', error); }
+        else { console.log('✅ マスターデータをSupabaseに保存しました'); }
+    } catch (err) {
+        console.error('❌ Settings保存例外:', err);
+    }
+}
+
+async function loadEvaluationsFromSupabase() {
+    try {
+        const { data, error } = await supabase.from('evaluations').select('*');
+        if (error) { console.error('❌ Supabase 読み込みエラー:', error); return; }
+        if (!data || data.length === 0) {
+            console.log('ℹ️ Supabaseにデータなし');
+            return;
+        }
+
+        // Supabaseのデータをappのevaluations形式に変換（eval_mode含む）
+        const remoteEvals = data.map(row => ({
+            id: 'sb_' + row.id,
+            evaluatorId: row.evaluatorId || row.evaluator_id || '',
+            targetEmployeeId: row.target_employee_id || '',
+            scores: typeof row.scores === 'object' ? row.scores : JSON.parse(row.scores || '{}'),
+            comment: row.comment || '',
+            periodId: row.period_id || (app.periods[0]?.id),
+            evalMode: row.eval_mode || 'general',
+            timestamp: row.created_at || new Date().toISOString()
+        }));
+
+        // Supabaseのデータを正として全置換（ローカルのみのデータは除外）
+        app.evaluations = remoteEvals;
+        render();
+        console.log(`✅ Supabaseから${remoteEvals.length}件の評価を読み込みました`);
+    } catch (err) {
+        console.error('❌ Supabase読み込み例外:', err);
+    }
+}
+// ================== Supabase 初期化 ==================
+
+
+// データをローカルストレージに保存
+// localStorage廃止 - Supabase一本化
+function saveData() { /* Supabase経由で保存 */ }
+function loadData() { /* Supabase経由で読み込み */ }
+
+const app = {
+    currentUser: null,
+    users: [{id:'admin',userId:'0000',password:'0000',name:'管理者'}],
+    loggedIn: false,
+    page: 'dashboard',
+    period: null,
+    selectedScores: {},
+    analysisMode: 'current',
+    periods: [
+        { id: 'P001', name: '2026年', start: '2026-07-01', end: '2026-12-31' },
+        { id: 'P002', name: '2027年', start: '2027-01-01', end: '2027-12-28' }
+    ],
+    departments: [
+        { id: 'ogaki1', name: '大垣①', maxWinners: 3 },
+        { id: 'ogaki2', name: '大垣②', maxWinners: 3 },
+        { id: 'central', name: '中央', maxWinners: 1 },
+        { id: 'general', name: '一般', maxWinners: 2 },
+        { id: 'special', name: '特殊', maxWinners: 1 },
+        { id: 'indirect', name: '間接・開発', maxWinners: 1 },
+        { id: 'saitou', name: 'サイトー株', maxWinners: 1 }
+    ],
+    evaluators: [{ id: 'ev001', name: '評価者1' }],
+    employees: [{ id: 'emp001', name: '従業員1', dept: 'ogaki1' }],
+    evaluations: [],
+    evalMode: 'general',
+    kakaricyoEmployees: [],
+    items: [
+        { id: 1, name: '自責思考', c: { 5: '問題発生時に原因を自分に求め実行', 4: '主に自責で改善行動', 3: '一部自責で不十分', 2: '他責傾向が強い', 1: '他人のせいにする' } },
+        { id: 2, name: '主体性（指示待ち脱却）', c: { 5: '指示がなくても自ら行動', 4: '自ら考え行動', 3: '指示があれば行動', 2: '指示待ち傾向', 1: '指示がないと動かない' } },
+        { id: 3, name: '課題発見・改善行動', c: { 5: '課題を整理し改善まで実行', 4: '改善提案・実行可能', 3: '課題認識あるが不十分', 2: '課題認識あるが行動しない', 1: '改善の必要性を認識しない' } },
+        { id: 4, name: '情報発信・共有力', c: { 5: '積極的に発信・共有', 4: '発信・共有できている', 3: '最低限の共有', 2: '共有に遅れや不足', 1: '発信・共有しない' } },
+        { id: 5, name: '巻き込み力', c: { 5: '周囲を巻き込み成果につなげる', 4: '協力して成果につなげる', 3: '協力し参加する', 2: '協力は受け身', 1: '周囲と連携しない' } },
+        { id: 6, name: '協調性・チーム貢献', c: { 5: '良好な関係を築き主体的に支援', 4: '良好な関係を築く', 3: '一般的な協調性あり', 2: '協調性にやや課題', 1: '対立や摩擦を生む' } },
+        { id: 7, name: '言動影響力', c: { 5: '前向きで周囲に良い影響', 4: '前向きで影響あり', 3: '影響はないが問題ない', 2: '消極的・否定的', 1: '悪影響を与える' } },
+        { id: 8, name: '柔軟性', c: { 5: '状況に応じて対応を変える', 4: '柔軟に対応', 3: '一般的な対応可能', 2: '固執傾向がある', 1: '固執し受け入れない' } },
+        { id: 9, name: 'やり切り力', c: { 5: '最後まで責任を持ってやり切る', 4: '概ねやり切っている', 3: '一部未完了', 2: 'やり切れないことが多い', 1: '途中で投げる' } },
+        { id: 10, name: '誠実性・責任ある言動', c: { 5: 'ルール遵守で信頼される', 4: '一貫性あり信頼できる', 3: '一般的な水準', 2: '一貫性にやや課題', 1: 'ルール違反や信頼欠如' } }
+    ],
+    
+    init() {
+        if (!this.period && this.periods.length > 0) this.period = this.periods[0].id;
+    },
+    save() {
+        // Supabaseのみに保存
+        saveSettingsToSupabase();
+    }
+};
+
+app.init();
+
+
+function logout() {
+    app.loggedIn = false;
+    app.currentUser = null;
+    app.selectedScores = {};
+    render();
+}
+
+function render() {
+    const root = document.getElementById('app');
+    if (!app.loggedIn) {
+        root.innerHTML = `<div style="min-height:100vh;background:linear-gradient(to bottom right,#1e3a8a,#1e40af);display:flex;align-items:center;justify-content:center;padding:16px;">
+            <div style="width:100%;max-width:448px;background:white;border-radius:8px;box-shadow:0 10px 25px rgba(0,0,0,0.2);padding:32px;">
+                <h1 style="font-size:30px;font-weight:bold;text-align:center;color:#1e3a8a;margin-bottom:8px;">MVP評価ツール</h1>
+                <p style="text-align:center;color:#666;margin-bottom:32px;">当事者意識の評価</p>
+                <form onsubmit="event.preventDefault(); if (document.getElementById('loginId').value === '0000' && document.getElementById('loginPwd').value === '0000') { app.loggedIn = true; render(); } else { alert('IDまたはパスワードが正しくありません'); }">
+                    <div style="margin-bottom:16px;">
+                        <label style="display:block;font-size:14px;font-weight:500;color:#374151;margin-bottom:8px;">ログインID</label>
+                        <input type="text" id="loginId" placeholder="0000" style="width:100%;padding:10px 16px;border:1px solid #d1d5db;border-radius:8px;font-size:16px;">
+                    </div>
+                    <div style="margin-bottom:24px;">
+                        <label style="display:block;font-size:14px;font-weight:500;color:#374151;margin-bottom:8px;">パスワード</label>
+                        <input type="password" id="loginPwd" placeholder="0000" style="width:100%;padding:10px 16px;border:1px solid #d1d5db;border-radius:8px;font-size:16px;">
+                    </div>
+                    <button type="submit" style="width:100%;background:#2563eb;color:white;font-weight:600;padding:10px;border-radius:8px;border:none;cursor:pointer;font-size:16px;">ログイン</button>
+                </form>
+            </div>
+        </div>`;
+    } else {
+        const content = app.page === 'dashboard' ? renderDashboard() : app.page === 'evaluate' ? renderEvaluate() : app.page === 'results' ? renderResults() : app.page === 'analysis' ? renderAnalysis() : app.page === 'email' ? renderEmail() : app.page === 'master' ? renderMaster() : '<div style="padding:32px;"><p>機能開発中</p></div>';
+        root.innerHTML = `<div style="display:flex;height:100vh;background:#f3f4f6;">
+            <div class="sidebar" style="width:256px;background:#1e3a8a;color:white;padding:24px;display:flex;flex-direction:column;gap:8px;">
+                <h2 style="font-size:20px;font-weight:bold;margin-bottom:16px;">MVP評価</h2>
+                <div class="mode-toggle" style="display:flex;gap:4px;margin-bottom:16px;background:#1e40af;border-radius:8px;padding:4px;">
+                    <button onclick="app.evalMode='general'; render();" style="flex:1;padding:8px 4px;border-radius:6px;border:none;cursor:pointer;font-size:11px;font-weight:600;background:${app.evalMode==='general'?'white':'transparent'};color:${app.evalMode==='general'?'#1e3a8a':'white'};">一般社員</button>
+                    <button onclick="app.evalMode='kakaricyo'; render();" style="flex:1;padding:8px 4px;border-radius:6px;border:none;cursor:pointer;font-size:11px;font-weight:600;background:${app.evalMode==='kakaricyo'?'#fbbf24':'transparent'};color:${app.evalMode==='kakaricyo'?'#1e3a8a':'white'};">係長・係長代理</button>
+                </div>
+                <nav style="flex:1;display:flex;flex-direction:column;gap:8px;">
+                    <button onclick="app.page='dashboard'; render();" style="width:100%;text-align:left;padding:12px 16px;border-radius:6px;background:${app.page === 'dashboard' ? '#1e40af' : 'transparent'};color:white;border:none;cursor:pointer;">📊 ダッシュボード</button>
+                    <button onclick="app.page='evaluate'; render();" style="width:100%;text-align:left;padding:12px 16px;border-radius:6px;background:${app.page === 'evaluate' ? '#1e40af' : 'transparent'};color:white;border:none;cursor:pointer;">📝 評価実施</button>
+                    <button onclick="app.page='results'; render();" style="width:100%;text-align:left;padding:12px 16px;border-radius:6px;background:${app.page === 'results' ? '#1e40af' : 'transparent'};color:white;border:none;cursor:pointer;">🏆 結果確認</button>
+                    <button onclick="app.page='analysis'; render();" style="width:100%;text-align:left;padding:12px 16px;border-radius:6px;background:${app.page === 'analysis' ? '#1e40af' : 'transparent'};color:white;border:none;cursor:pointer;">📈 分析</button>
+                    <button onclick="app.page='email'; render();" style="width:100%;text-align:left;padding:12px 16px;border-radius:6px;background:${app.page === 'email' ? '#1e40af' : 'transparent'};color:white;border:none;cursor:pointer;">📧 メール配信</button>
+                    <button onclick="app.page='master'; render();" style="width:100%;text-align:left;padding:12px 16px;border-radius:6px;background:${app.page === 'master' ? '#1e40af' : 'transparent'};color:white;border:none;cursor:pointer;">⚙️ マスター管理</button>
+                </nav>
+                <button onclick="logout();" style="width:100%;background:#dc2626;color:white;font-weight:600;padding:10px;border-radius:6px;border:none;cursor:pointer;">ログアウト</button>
+            </div>
+            <div class="main-content" style="flex:1;overflow-y:auto;">${content}</div>
+        </div>`;
+    }
+}
+
+function renderDashboard() {
+    const p = app.periods.find(x => x.id === app.period);
+    const idx = app.periods.indexOf(p) + 1;
+
+    const allPeriodEvals = app.evaluations.filter(e => e.periodId === app.period);
+    const generalEvals = allPeriodEvals.filter(e => (e.evalMode || 'general') === 'general');
+    const kakaricyoEvals = allPeriodEvals.filter(e => (e.evalMode || 'general') === 'kakaricyo');
+
+    const calcAvg = (evals) => {
+        if (evals.length === 0) return null;
+        const all = evals.flatMap(e => Object.values(e.scores));
+        return (all.reduce((a,b) => a+b, 0) / all.length).toFixed(2);
+    };
+
+    const totalAvg = calcAvg(allPeriodEvals);
+    const generalAvg = calcAvg(generalEvals);
+    const kakaricyoAvg = calcAvg(kakaricyoEvals);
+
+    const itemAvgs = app.items.map(item => {
+        const scores = allPeriodEvals.map(e => e.scores[item.id] || 0).filter(s => s > 0);
+        const avg = scores.length > 0 ? (scores.reduce((a,b) => a+b, 0) / scores.length).toFixed(2) : null;
+        return { name: item.name, avg };
+    }).filter(x => x.avg !== null).sort((a,b) => b.avg - a.avg);
+
+    return `<div style="padding:32px;max-width:1280px;">
+        <h1 style="font-size:32px;font-weight:bold;color:#111827;margin-bottom:32px;">ダッシュボード</h1>
+
+        ${allPeriodEvals.length > 0 ? `
+        <div style="background:linear-gradient(135deg,#1e3a8a,#2563eb);border-radius:12px;padding:28px;margin-bottom:28px;color:white;">
+            <h2 style="font-size:20px;font-weight:bold;margin-bottom:20px;">🏢 会社全体スコア（${p.name}）</h2>
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px;">
+                <div style="background:rgba(255,255,255,0.15);border-radius:10px;padding:20px;text-align:center;">
+                    <p style="font-size:13px;opacity:0.85;margin-bottom:8px;">全社平均</p>
+                    <p style="font-size:40px;font-weight:bold;">${totalAvg}</p>
+                    <p style="font-size:13px;opacity:0.75;margin-top:4px;">点 / ${allPeriodEvals.length}件</p>
+                </div>
+                <div style="background:rgba(255,255,255,0.1);border-radius:10px;padding:20px;text-align:center;">
+                    <p style="font-size:13px;opacity:0.85;margin-bottom:8px;">👤 一般社員</p>
+                    <p style="font-size:36px;font-weight:bold;">${generalAvg || '-'}</p>
+                    <p style="font-size:13px;opacity:0.75;margin-top:4px;">点 / ${generalEvals.length}件</p>
+                </div>
+                <div style="background:rgba(251,191,36,0.25);border-radius:10px;padding:20px;text-align:center;border:1px solid rgba(251,191,36,0.5);">
+                    <p style="font-size:13px;opacity:0.85;margin-bottom:8px;">⭐ 係長・係長代理</p>
+                    <p style="font-size:36px;font-weight:bold;">${kakaricyoAvg || '-'}</p>
+                    <p style="font-size:13px;opacity:0.75;margin-top:4px;">点 / ${kakaricyoEvals.length}件</p>
+                </div>
+            </div>
+            ${itemAvgs.length > 0 ? `
+            <div>
+                <p style="font-size:14px;font-weight:600;margin-bottom:12px;opacity:0.9;">📊 項目別全社平均（高い順）</p>
+                <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:8px;">
+                    ${itemAvgs.map((item, i) => {
+                        const score = parseFloat(item.avg);
+                        const pct = ((score - 1) / 4 * 100).toFixed(0);
+                        const color = score >= 4 ? '#4ade80' : score >= 3 ? '#93c5fd' : '#fca5a5';
+                        return `<div style="background:rgba(255,255,255,0.1);border-radius:8px;padding:10px 14px;">
+                            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                                <span style="font-size:12px;opacity:0.9;">${i+1}. ${item.name}</span>
+                                <span style="font-size:14px;font-weight:bold;color:${color};">${item.avg}</span>
+                            </div>
+                            <div style="background:rgba(255,255,255,0.2);border-radius:4px;height:6px;">
+                                <div style="background:${color};width:${pct}%;height:6px;border-radius:4px;"></div>
+                            </div>
+                        </div>`;
+                    }).join('')}
+                </div>
+            </div>` : ''}
+        </div>` : `
+        <div style="background:white;border-radius:12px;padding:24px;margin-bottom:28px;text-align:center;border:2px dashed #e5e7eb;">
+            <p style="color:#9ca3af;font-size:16px;">まだ評価データがありません</p>
+        </div>`}
+
+        <div style="background:white;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);padding:24px;">
+            <h2 style="font-size:20px;font-weight:bold;color:#111827;margin-bottom:16px;">評価期間管理</h2>
+            <div style="margin-bottom:24px;padding-bottom:24px;border-bottom:1px solid #e5e7eb;">
+                <h3 style="font-weight:600;color:#111827;margin-bottom:12px;">📋 全評価期間一覧</h3>
+                <div style="display:grid;gap:8px;">
+                    ${app.periods.map((pd, i) => `<div style="padding:16px;border-radius:6px;border:1px solid ${pd.id === app.period ? '#3b82f6' : '#e5e7eb'};background:${pd.id === app.period ? '#dbeafe' : '#f9fafb'};cursor:pointer;" onclick="app.period='${pd.id}'; render();">
+                        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                            <div style="flex:1;"><p style="font-weight:600;color:#111827;">第${i+1}回 ${pd.name}</p><p style="font-size:14px;color:#666;">${pd.start} ～ ${pd.end}</p></div>
+                            ${app.periods.length > 1 ? `<button onclick="event.stopPropagation(); if(confirm('削除してもよろしいですか？')) { app.periods = app.periods.filter(x => x.id !== '${pd.id}'); app.evaluations = app.evaluations.filter(e => e.periodId !== '${pd.id}'); if(app.period === '${pd.id}') app.period = app.periods[0]?.id; app.save(); render(); }" style="background:#dc2626;color:white;padding:6px 12px;border-radius:4px;border:none;cursor:pointer;font-size:14px;">🗑️</button>` : ''}
+                        </div>
+                    </div>`).join('')}
+                </div>
+            </div>
+            <div style="margin-bottom:24px;padding-bottom:24px;border-bottom:1px solid #e5e7eb;">
+                <h3 style="font-weight:600;color:#111827;margin-bottom:8px;">現在選択中</h3>
+                <p style="font-size:28px;font-weight:bold;color:#2563eb;margin-bottom:8px;">第${idx}回 ${p.name}</p>
+                <p style="color:#666;">${p.start} ～ ${p.end}</p>
+            </div>
+            <div>
+                <h3 style="font-weight:600;color:#111827;margin-bottom:12px;">➕ 新規期間を追加</h3>
+                <div style="display:grid;gap:12px;">
+                    <input type="text" id="newPeriodName" placeholder="例：2027年上期" style="padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;">
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                        <input type="date" id="newPeriodStart" style="padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;">
+                        <input type="date" id="newPeriodEnd" style="padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;">
+                    </div>
+                    <button onclick="addPeriod()" style="background:#16a34a;color:white;font-weight:600;padding:10px;border-radius:6px;border:none;cursor:pointer;">➕ 追加</button>
+                </div>
+            </div>
+        </div>
+    </div>`;
+}
+function addPeriod() {
+    const name = document.getElementById('newPeriodName').value;
+    const start = document.getElementById('newPeriodStart').value;
+    const end = document.getElementById('newPeriodEnd').value;
+    if (!name.trim() || !start || !end) { alert('すべての項目を入力してください'); return; }
+    const newId = 'P' + String(app.periods.length + 1).padStart(3, '0');
+    app.periods.push({ id: newId, name, start, end });
+    app.save();
+    document.getElementById('newPeriodName').value = '';
+    document.getElementById('newPeriodStart').value = '';
+    document.getElementById('newPeriodEnd').value = '';
+    alert('新規期間を追加しました');
+    render();
+}
+
+function renderEvaluate() {
+    const p = app.periods.find(x => x.id === app.period);
+    const idx = app.periods.indexOf(p) + 1;
+    const isKakaricyo = app.evalMode === 'kakaricyo';
+    const modeLabel = isKakaricyo ? '係長・係長代理' : '一般社員';
+    const modeBg = isKakaricyo ? '#fef3c7' : 'white';
+    const modeBorder = isKakaricyo ? '#f59e0b' : '#e5e7eb';
+    return `<div style="padding:32px;max-width:1024px;">
+        <h1 style="font-size:32px;font-weight:bold;color:#111827;margin-bottom:8px;">評価実施</h1>
+        <div style="background:${modeBg};border:2px solid ${modeBorder};border-radius:8px;padding:12px 16px;margin-bottom:20px;display:flex;align-items:center;gap:8px;">
+            <span style="font-size:16px;">${isKakaricyo ? '⭐' : '👤'}</span>
+            <span style="font-weight:700;color:#374151;">モード：${modeLabel}</span>
+            ${isKakaricyo ? '<span style="font-size:13px;color:#92400e;">評価後、話し合いでMVPを決定します</span>' : ''}
+        </div>
+        <div style="margin-bottom:24px;display:flex;align-items:center;justify-content:space-between;">
+            <p style="color:#666;font-weight:600;">第${idx}回: ${p.name}</p>
+            <select id="periodSelectEval" style="padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;" onchange="changePeriodEval(this.value)">
+                ${app.periods.map((pd, i) => `<option value="${pd.id}" ${pd.id === app.period ? 'selected' : ''}>第${i+1}回 ${pd.name}</option>`).join('')}
+            </select>
+        </div>
+        <div style="background:white;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);padding:24px;margin-bottom:32px;">
+            <h2 style="font-size:20px;font-weight:bold;color:#111827;margin-bottom:16px;">基本情報</h2>
+            <div style="display:grid;grid-template-columns:${isKakaricyo ? 'repeat(2,1fr)' : 'repeat(3, 1fr)'};gap:16px;">
+                <div>
+                    <label style="display:block;font-size:14px;font-weight:500;color:#374151;margin-bottom:8px;">評価者</label>
+                    <select id="evaluator" style="width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;">
+                        <option value="">選択</option>
+                        ${app.evaluators.map(e => `<option value="${e.id}">${e.name}</option>`).join('')}
+                    </select>
+                </div>
+                ${isKakaricyo ? `
+                <div>
+                    <label style="display:block;font-size:14px;font-weight:500;color:#374151;margin-bottom:8px;">対象者（係長・係長代理）</label>
+                    <select id="targetEmployee" style="width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;">
+                        <option value="">選択</option>
+                        ${app.kakaricyoEmployees.map(e => {
+                            const dept = app.departments.find(d => d.id === e.dept);
+                            return `<option value="${e.id}">${e.name}（${e.role}${dept ? ' / '+dept.name : ''}）</option>`;
+                        }).join('')}
+                    </select>
+                </div>` : `
+                <div>
+                    <label style="display:block;font-size:14px;font-weight:500;color:#374151;margin-bottom:8px;">対象部署</label>
+                    <select id="department" onchange="updateTargetList()" style="width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;">
+                        <option value="">選択</option>
+                        ${app.departments.map(d => `<option value="${d.id}">${d.name}</option>`).join('')}
+                    </select>
+                </div>
+                <div>
+                    <label style="display:block;font-size:14px;font-weight:500;color:#374151;margin-bottom:8px;">対象者</label>
+                    <select id="targetEmployee" style="width:100%;padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;">
+                        <option value="">選択</option>
+                    </select>
+                </div>`}
+            </div>
+        </div>
+        <div style="background:white;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);padding:24px;margin-bottom:32px;">
+            <h2 style="font-size:20px;font-weight:bold;color:#111827;margin-bottom:16px;">評価項目</h2>
+            ${app.items.map((item, itemIdx) => `<div style="margin-bottom:24px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">
+                <div style="padding:16px;background:#f3f4f6;cursor:pointer;font-weight:600;user-select:none;display:flex;justify-content:space-between;align-items:center;" onclick="toggleItem(${item.id})">
+                    <span>${itemIdx + 1}. ${item.name}</span>
+                    <span style="color:#9ca3af;font-size:12px;">▼</span>
+                </div>
+                <div style="display:none;padding:16px;" id="item-content-${item.id}">
+                    ${[5,4,3,2,1].map(s => {
+                        const labels = ['完全達成','ほぼ達成','標準的','やや改善','大きく改善'];
+                        return `<button type="button" id="btn-${item.id}-${s}" style="display:block;width:100%;padding:12px;margin-bottom:8px;text-align:left;background:#f3f4f6;border:1px solid #e5e7eb;border-radius:6px;cursor:pointer;transition:all 0.2s;" onclick="selectScoreBtn(${item.id}, ${s})">
+                            <span style="display:inline-block;width:40px;height:40px;background:#3b82f6;color:white;border-radius:6px;text-align:center;line-height:40px;font-weight:bold;margin-right:12px;vertical-align:middle;font-size:16px;">${s}</span>
+                            <strong>${labels[5-s]}</strong>
+                            <div style="font-size:14px;color:#666;margin-top:6px;">${item.c[s]}</div>
+                        </button>`;
+                    }).join('')}
+                </div>
+            </div>`).join('')}
+        </div>
+        <div style="background:white;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);padding:24px;margin-bottom:32px;">
+            <label style="display:block;font-size:14px;font-weight:500;color:#374151;margin-bottom:8px;">上司コメント（必須）</label>
+            <textarea id="comment" placeholder="選出理由や行動例..." style="width:100%;padding:16px;border:1px solid #d1d5db;border-radius:6px;height:96px;font-family:inherit;resize:vertical;"></textarea>
+        </div>
+        <button onclick="submitEvaluation().catch(err => console.error('エラー:', err))" style="width:100%;background:#2563eb;color:white;font-weight:600;padding:16px;border-radius:6px;border:none;cursor:pointer;font-size:18px;">評価を保存</button>
+    </div>`;
+}
+
+function toggleItem(itemId) {
+    const el = document.getElementById(`item-content-${itemId}`);
+    if (el) el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+function selectScoreBtn(itemId, score) {
+    app.selectedScores[itemId] = score;
+    // 他のボタンをリセット
+    for (let s = 1; s <= 5; s++) {
+        const btn = document.getElementById(`btn-${itemId}-${s}`);
+        if (btn) {
+            if (s === score) {
+                btn.style.background = '#3b82f6';
+                btn.style.color = 'white';
+                btn.style.borderColor = '#3b82f6';
+            } else {
+                btn.style.background = '#f3f4f6';
+                btn.style.color = '#111827';
+                btn.style.borderColor = '#e5e7eb';
+            }
+        }
+    }
+}
+
+function updateTargetList() {
+    const deptId = document.getElementById('department').value;
+    const targetSelect = document.getElementById('targetEmployee');
+    targetSelect.innerHTML = '<option value="">選択</option>';
+    
+    const filtered = app.employees.filter(e => e.dept === deptId);
+    
+    filtered.forEach(e => {
+        const option = document.createElement('option');
+        option.value = e.id;
+        option.textContent = e.name;
+        targetSelect.appendChild(option);
+    });
+}
+
+function submitEvaluation() {
+    const evaluatorId = document.getElementById('evaluator').value;
+    const targetEmployeeId = document.getElementById('targetEmployee').value;
+    const comment = document.getElementById('comment').value;
+    
+    if (!evaluatorId || !targetEmployeeId || !comment.trim()) {
+        alert('すべての項目を入力してください');
+        return Promise.reject('入力不完全');
+    }
+    
+    if (Object.keys(app.selectedScores).length < 10) {
+        alert('すべての評価項目を評価してください（10項目が必要です）');
+        return Promise.reject('評価不完全');
+    }
+    
+    const scores = {};
+    app.items.forEach((item, idx) => {
+        scores[idx + 1] = app.selectedScores[item.id] || 0;
+    });
+    
+    const evaluation = {
+        id: Date.now().toString(),
+        evaluatorId: evaluatorId,
+        targetEmployeeId: targetEmployeeId,
+        scores: scores,
+        comment: comment,
+        periodId: app.period || app.periods[0].id,
+        evalMode: app.evalMode || 'general',
+        timestamp: new Date().toISOString()
+    };
+    
+    // メモリに追加
+    app.evaluations.push(evaluation);
+    
+    // Supabase に保存
+    if (supabase) {
+        console.log('📤 Supabase に送信中...');
+        return supabase
+            .from('evaluations')
+            .insert([{
+                evaluatorId: evaluatorId,
+                target_employee_id: targetEmployeeId,
+                scores: scores,
+                comment: comment,
+                period_id: app.period || app.periods[0].id,
+                eval_mode: app.evalMode || 'general' 
+            }])
+            .then(result => {
+                if (result.error) {
+                    console.error('❌ Supabase 保存エラー:', result.error);
+                    alert('⚠️ ローカルには保存されました\n（Supabase への保存に失敗しました）');
+                } else {
+                    console.log('✅ Supabase に保存しました');
+                    alert('✅ 評価を送信しました！\n他のユーザーも結果を確認できます。');
+                }
+                app.selectedScores = {};
+                render();
+                return Promise.resolve();
+            })
+            .catch(err => {
+                console.error('❌ Supabase エラー:', err);
+                alert('⚠️ Supabase への送信に失敗しました\n（ローカルには保存されています）');
+                app.selectedScores = {};
+                render();
+                return Promise.reject(err);
+            });
+    } else {
+        console.log('ℹ️ Supabase が初期化されていません（ローカルのみに保存）');
+        app.selectedScores = {};
+        alert('✅ 評価を送信しました！（ローカルのみ）');
+        render();
+        return Promise.resolve();
+    }
+}
+
+function renderResults() {
+    const isKakaricyo = app.evalMode === 'kakaricyo';
+    const evals = app.evaluations.filter(e => e.periodId === app.period && (e.evalMode || 'general') === (app.evalMode || 'general'));
+    const allScores = evals.flatMap(e => Object.values(e.scores));
+    const avg = allScores.length > 0 ? (allScores.reduce((a, b) => a + b, 0) / allScores.length).toFixed(2) : '0';
+    const modeBg = isKakaricyo ? '#fef3c7' : 'white';
+    const modeBorder = isKakaricyo ? '#f59e0b' : '#e5e7eb';
+    const modeLabel = isKakaricyo ? '⭐ 係長・係長代理' : '👤 一般社員';
+
+    // 係長モードの結果表示
+    const kakaricyoResults = isKakaricyo ? (() => {
+        if (evals.length === 0) return '<p style="color:#666;">評価データなし</p>';
+        // 部署別にグループ化
+        const deptGroups = {};
+        app.kakaricyoEmployees.forEach(emp => {
+            const empEvals = evals.filter(e => e.targetEmployeeId === emp.id);
+            if (empEvals.length === 0) return;
+            const allS = empEvals.flatMap(e => Object.values(e.scores));
+            const a = (allS.reduce((x,y)=>x+y,0)/allS.length).toFixed(2);
+            const deptId = emp.dept || 'none';
+            if (!deptGroups[deptId]) deptGroups[deptId] = [];
+            deptGroups[deptId].push({ emp, avg: parseFloat(a), avgStr: a, count: empEvals.length });
+        });
+        // 部署なしグループも含める
+        const deptList = [...app.departments.filter(d => deptGroups[d.id]), ...(deptGroups['none'] ? [{id:'none',name:'部署未設定'}] : [])];
+        if (deptList.length === 0) {
+            // 部署設定なしの場合は全体ランキング
+            const ranked = app.kakaricyoEmployees.map(emp => {
+                const empEvals = evals.filter(e => e.targetEmployeeId === emp.id);
+                if (empEvals.length === 0) return null;
+                const allS = empEvals.flatMap(e => Object.values(e.scores));
+                const a = (allS.reduce((x,y)=>x+y,0)/allS.length).toFixed(2);
+                return { emp, avg: parseFloat(a), avgStr: a, count: empEvals.length };
+            }).filter(Boolean).sort((a,b) => b.avg - a.avg);
+            return ranked.map((r,i) => `<div style="padding:16px;background:${i===0?'#fef9c3':'#f9fafb'};border:${i===0?'2px solid #f59e0b':'1px solid #e5e7eb'};border-radius:8px;margin-bottom:12px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;" onclick="showKakaricyoDetail('${r.emp.id}')"><div><p style="font-weight:700;font-size:16px;">${i===0?'🥇':i===1?'🥈':i===2?'🥉':'　'} <span style="color:#1e3a8a;text-decoration:underline;">${r.emp.name}</span> <span style="font-size:13px;color:#666;">(${r.emp.role})</span></p><p style="font-size:13px;color:#666;margin-top:4px;">評価件数: ${r.count}件</p></div><span style="font-size:24px;font-weight:bold;color:#1e3a8a;">${r.avgStr}点</span></div>`).join('') + '<p style="font-size:13px;color:#92400e;margin-top:16px;padding:12px;background:#fef3c7;border-radius:6px;">※ 上記スコアを参考に、話し合いでMVPを決定してください</p>';
+        }
+        return deptList.map(dept => {
+            const members = (deptGroups[dept.id] || []).sort((a,b) => b.avg - a.avg);
+            return `<div style="margin-bottom:20px;"><h3 style="font-size:16px;font-weight:700;color:#92400e;margin-bottom:12px;padding-bottom:8px;border-bottom:2px solid #f59e0b;">${dept.name}</h3>${members.map((r,i) => `<div style="padding:14px;background:${i===0?'#fef9c3':'#f9fafb'};border:${i===0?'2px solid #f59e0b':'1px solid #e5e7eb'};border-radius:8px;margin-bottom:10px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;" onclick="showKakaricyoDetail('${r.emp.id}')"><div><p style="font-weight:700;font-size:15px;">${i===0?'🥇':i===1?'🥈':i===2?'🥉':'　'} <span style="color:#1e3a8a;text-decoration:underline;">${r.emp.name}</span> <span style="font-size:13px;color:#666;">(${r.emp.role})</span></p><p style="font-size:12px;color:#666;margin-top:3px;">評価件数: ${r.count}件</p></div><span style="font-size:22px;font-weight:bold;color:#1e3a8a;">${r.avgStr}点</span></div>`).join('')}</div>`;
+        }).join('') + '<p style="font-size:13px;color:#92400e;margin-top:8px;padding:12px;background:#fef3c7;border-radius:6px;">※ 上記スコアを参考に、話し合いでMVPを決定してください</p>';
+    })() : '';
+
+    return `<div style="padding:32px;"><h1 style="font-size:32px;font-weight:bold;color:#111827;margin-bottom:16px;">結果確認</h1>
+        <div style="background:${modeBg};border:2px solid ${modeBorder};border-radius:8px;padding:10px 16px;margin-bottom:20px;font-weight:700;color:#374151;">${modeLabel}</div>
+        <div style="background:white;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);padding:24px;margin-bottom:32px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+            <select id="periodSelectResults" style="padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;" onchange="changePeriodResults(this.value)">
+                ${app.periods.map(pd => `<option value="${pd.id}" ${pd.id === app.period ? 'selected' : ''}>${pd.name}</option>`).join('')}
+            </select>
+            <button onclick="deleteAllEvaluations()" style="padding:8px 16px;background:#dc2626;color:white;border:none;border-radius:6px;cursor:pointer;font-size:14px;">🗑️ 全データ削除</button>
+        </div>
+        ${allScores.length === 0 ? '<p style="color:#666;">評価データなし</p>' : `
+            <div style="background:white;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);padding:24px;margin-bottom:32px;">
+                <p style="color:#666;">平均スコア: <span style="font-size:32px;font-weight:bold;color:#2563eb;">${avg}点</span></p>
+                <p style="color:#666;margin-top:8px;">総評価件数: <strong>${evals.length}件</strong></p>
+            </div>
+            ${isKakaricyo ? `<div style="background:white;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);padding:24px;">${kakaricyoResults}</div>` :
+            app.departments.map(dept => {
+                // この部署の従業員一覧
+                const deptEmps = app.employees.filter(x => x.dept === dept.id);
+                // 各従業員の評価を集計
+                const ranked = deptEmps.map(emp => {
+                    const empEvals = evals.filter(e => e.targetEmployeeId === emp.id);
+                    if (empEvals.length === 0) return null;
+                    const allScores = empEvals.flatMap(e => Object.values(e.scores));
+                    const a = (allScores.reduce((a, b) => a + b, 0) / allScores.length).toFixed(2);
+                    const lastDate = new Date(Math.max(...empEvals.map(e => new Date(e.timestamp)))).toLocaleDateString('ja-JP');
+                    return { emp, avg: parseFloat(a), avgStr: a, count: empEvals.length, date: lastDate };
+                }).filter(Boolean).sort((a, b) => b.avg - a.avg);
+
+                return `<div style="background:white;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);padding:24px;margin-bottom:24px;">
+                    <h3 style="font-size:18px;font-weight:bold;color:#111827;margin-bottom:16px;">${dept.name}</h3>
+                    ${ranked.length === 0 ? '<p style="color:#999;">評価データなし</p>' : ranked.map((r, i) => `<div style="padding:12px;background:${i===0?'#dbeafe':'#f9fafb'};border:${i===0?'2px solid #2563eb':'1px solid #e5e7eb'};border-radius:6px;margin-bottom:12px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;" onclick="showEmpDetail('${r.emp.id}')">
+                        <div>
+                            <p style="font-weight:600;"><strong>${i+1}位</strong> <span style="color:#2563eb;text-decoration:underline;">${r.emp.name}</span> - <span style="font-weight:bold;color:#2563eb;">${r.avgStr}点</span></p>
+                            <p style="font-size:12px;color:#999;">評価件数: ${r.count}件 | 最終評価日: ${r.date}</p>
+                        </div>
+                        ${i === 0 ? '<span style="font-size:20px;">🏆</span>' : ''}
+                    </div>`).join('')}
+                </div>`;
+            }).join('')}
+        `}
+    </div>`;
+}
+
+function showKakaricyoDetail(empId) {
+    const emp = app.kakaricyoEmployees.find(e => e.id === empId);
+    const evals = app.evaluations.filter(e => e.targetEmployeeId === empId && e.periodId === app.period);
+    document.getElementById('modalContent').innerHTML = `
+        <h2 style="font-size:22px;font-weight:bold;color:#111827;margin-bottom:4px;">${emp.name} <span style="font-size:14px;color:#666;">(${emp.role})</span></h2>
+        <p style="font-size:13px;color:#999;margin-bottom:16px;">評価件数: ${evals.length}件</p>
+        ${evals.length === 0 ? '<p>評価なし</p>' : evals.map((e) => {
+            const evaluator = app.evaluators.find(ev => ev.id === e.evaluatorId);
+            const scores = Object.values(e.scores);
+            const avg = (scores.reduce((a,b)=>a+b,0)/scores.length).toFixed(2);
+            const evalIndex = app.evaluations.indexOf(e);
+            const itemScores = Object.entries(e.scores).map(([itemId, score]) => {
+                const item = app.items.find(i => i.id === parseInt(itemId));
+                return '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #e5e7eb;"><span style="font-size:13px;">' + (item?item.name:'項目'+itemId) + '</span><span style="font-weight:bold;color:' + (score>=4?'#059669':score>=3?'#2563eb':'#dc2626') + ';">' + score + '点</span></div>';
+            }).join('');
+            return '<div style="background:#f9fafb;padding:14px;border-radius:8px;margin-bottom:12px;border:1px solid #e5e7eb;"><div style="display:flex;justify-content:space-between;margin-bottom:10px;"><div><p style="font-size:13px;color:#666;">評価者: <strong>' + (evaluator?.name||'不明') + '</strong> | ' + new Date(e.timestamp).toLocaleDateString('ja-JP') + '</p><p style="font-size:16px;font-weight:bold;color:#2563eb;margin-top:4px;">平均: ' + avg + '点</p></div><button onclick="deleteEvaluation(' + evalIndex + ',&quot;' + e.id + '&quot;)" style="background:#dc2626;color:white;padding:6px 12px;border-radius:6px;border:none;cursor:pointer;font-size:12px;">🗑️ 削除</button></div>' + itemScores + (e.comment ? '<p style="font-size:13px;color:#555;margin-top:8px;padding:8px;background:white;border-radius:4px;border-left:3px solid #f59e0b;">💬 ' + e.comment + '</p>' : '') + '</div>';
+        }).join('')}
+        <button onclick="document.getElementById('modal').style.display='none';" style="width:100%;background:#6b7280;color:white;padding:10px;border-radius:6px;border:none;cursor:pointer;margin-top:8px;">閉じる</button>
+    `;
+    document.getElementById('modal').style.display = 'flex';
+}
+
+
+function addUser() {
+    const name = document.getElementById('newUserName').value;
+    const userId = document.getElementById('newUserId').value;
+    const password = document.getElementById('newUserPw').value;
+    
+    if(!name || !userId || !password) {
+        alert('すべての項目を入力してください');
+        return;
+    }
+    
+    if(app.users.find(u => u.userId === userId)) {
+        alert('このIDは既に使用されています');
+        return;
+    }
+    
+    app.users.push({
+        id: 'user' + Date.now(),
+        userId: userId,
+        password: password,
+        name: name
+    });
+    
+    saveData();
+    document.getElementById('newUserName').value = '';
+    document.getElementById('newUserId').value = '';
+    document.getElementById('newUserPw').value = '';
+    
+    alert('✅ ユーザーを追加しました');
+    render();
+}
+
+function deleteUser(index) {
+    if(app.users.length <= 1) {
+        alert('最後のユーザーは削除できません');
+        return;
+    }
+    if(confirm('このユーザーを削除しますか？')) {
+        app.users.splice(index, 1);
+        saveData();
+        alert('ユーザーを削除しました');
+        render();
+    }
+}
+
+function renderMaster() {
+    return `<div style="padding:32px;max-width:1280px;">
+        <h1 style="font-size:32px;font-weight:bold;color:#111827;margin-bottom:32px;">⚙️ マスター管理</h1>
+
+        <!-- 1. ユーザー管理 -->
+        <div style="background:white;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);padding:24px;margin-bottom:24px;">
+            <h2 style="font-size:20px;font-weight:bold;color:#111827;margin-bottom:16px;">👤 ユーザー管理</h2>
+            <div style="margin-bottom:20px;">
+                <h3 style="color:#374151;margin-bottom:12px;">新規ユーザー追加</h3>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px;">
+                    <input type="text" id="newUserName" placeholder="ユーザー名" style="padding:10px;border:1px solid #d1d5db;border-radius:6px;">
+                    <input type="text" id="newUserId" placeholder="ID" style="padding:10px;border:1px solid #d1d5db;border-radius:6px;">
+                    <input type="text" id="newUserPw" placeholder="パスワード" style="padding:10px;border:1px solid #d1d5db;border-radius:6px;">
+                </div>
+                <button onclick="addUser()" style="padding:10px 20px;background:#10b981;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;">ユーザーを追加</button>
+            </div>
+            <table style="width:100%;border-collapse:collapse;">
+                <thead><tr style="background:#f3f4f6;">
+                    <th style="padding:12px;text-align:left;border-bottom:1px solid #d1d5db;font-weight:600;">ユーザー名</th>
+                    <th style="padding:12px;text-align:left;border-bottom:1px solid #d1d5db;font-weight:600;">ID</th>
+                    <th style="padding:12px;text-align:left;border-bottom:1px solid #d1d5db;font-weight:600;">パスワード</th>
+                    <th style="padding:12px;text-align:center;border-bottom:1px solid #d1d5db;font-weight:600;">操作</th>
+                </tr></thead>
+                <tbody>
+                    ${app.users.map((u,idx)=>`<tr style="border-bottom:1px solid #e5e7eb;">
+                        <td style="padding:12px;">${u.name}</td>
+                        <td style="padding:12px;"><code style="background:#f3f4f6;padding:4px 8px;border-radius:3px;">${u.userId}</code></td>
+                        <td style="padding:12px;"><code style="background:#f3f4f6;padding:4px 8px;border-radius:3px;">${u.password}</code></td>
+                        <td style="padding:12px;text-align:center;"><button onclick="deleteUser(${idx})" style="padding:6px 12px;background:#dc2626;color:white;border:none;border-radius:4px;cursor:pointer;">削除</button></td>
+                    </tr>`).join('')}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 2. Excelインポート -->
+        <div style="background:white;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);padding:24px;margin-bottom:24px;">
+            <h2 style="font-size:20px;font-weight:bold;color:#111827;margin-bottom:16px;">📊 Excelインポート</h2>
+            <p style="color:#666;margin-bottom:12px;">従業員・評価項目マスター.xlsxをアップロード</p>
+            <input type="file" id="excelFile" accept=".xlsx" onchange="handleExcelUpload(event)" style="padding:8px;border:1px solid #d1d5db;border-radius:6px;">
+        </div>
+
+        <!-- 3. 部署管理 -->
+        <div style="background:white;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);padding:24px;margin-bottom:24px;">
+            <h2 style="font-size:20px;font-weight:bold;color:#111827;margin-bottom:16px;">🏢 部署管理</h2>
+            <div style="max-height:256px;overflow-y:auto;margin-bottom:16px;">
+                <table style="width:100%;border-collapse:collapse;">
+                    <thead><tr style="background:#f3f4f6;">
+                        <th style="padding:12px;text-align:left;border-bottom:1px solid #e5e7eb;font-weight:600;">部署名</th>
+                        <th style="padding:12px;text-align:center;border-bottom:1px solid #e5e7eb;font-weight:600;">最大選出人数</th>
+                        <th style="padding:12px;text-align:center;border-bottom:1px solid #e5e7eb;font-weight:600;">操作</th>
+                    </tr></thead>
+                    <tbody>
+                        ${app.departments.map((d, idx) => `<tr style="border-bottom:1px solid #e5e7eb;">
+                            <td style="padding:12px;">${d.name}</td>
+                            <td style="padding:12px;text-align:center;">${d.maxWinners}名</td>
+                            <td style="padding:12px;text-align:center;"><button onclick="deleteDept(${idx})" style="background:#dc2626;color:white;padding:6px 12px;border-radius:4px;border:none;cursor:pointer;font-size:14px;">🗑️</button></td>
+                        </tr>`).join('')}
+                    </tbody>
+                </table>
+            </div>
+            <div style="display:grid;gap:12px;">
+                <input type="text" id="newDeptName" placeholder="部署名" style="padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;">
+                <input type="number" id="newDeptMax" placeholder="最大選出人数" value="1" min="1" style="padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;">
+                <button onclick="addDept()" style="background:#16a34a;color:white;font-weight:600;padding:10px;border-radius:6px;border:none;cursor:pointer;">➕ 追加</button>
+            </div>
+        </div>
+
+        <!-- 3. 評価マスター -->
+        <div style="background:white;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);padding:24px;margin-bottom:24px;">
+            <h2 style="font-size:20px;font-weight:bold;color:#111827;margin-bottom:16px;">📋 評価者マスター</h2>
+            <div style="max-height:256px;overflow-y:auto;margin-bottom:16px;">
+                <table style="width:100%;border-collapse:collapse;">
+                    <thead><tr style="background:#f3f4f6;">
+                        <th style="padding:12px;text-align:left;border-bottom:1px solid #e5e7eb;font-weight:600;">評価者名</th>
+                        <th style="padding:12px;text-align:center;border-bottom:1px solid #e5e7eb;font-weight:600;">操作</th>
+                    </tr></thead>
+                    <tbody>
+                        ${app.evaluators.map((e, idx) => `<tr style="border-bottom:1px solid #e5e7eb;">
+                            <td style="padding:12px;">${e.name}</td>
+                            <td style="padding:12px;text-align:center;"><button onclick="deleteEval(${idx})" style="background:#dc2626;color:white;padding:6px 12px;border-radius:4px;border:none;cursor:pointer;font-size:14px;">🗑️</button></td>
+                        </tr>`).join('')}
+                    </tbody>
+                </table>
+            </div>
+            <div style="display:grid;gap:12px;">
+                <input type="text" id="newEvaluator" placeholder="評価者名" style="padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;">
+                <button onclick="addEval()" style="background:#16a34a;color:white;font-weight:600;padding:10px;border-radius:6px;border:none;cursor:pointer;">➕ 追加</button>
+            </div>
+        </div>
+
+        <!-- 4. 従業員マスター -->
+        <div style="background:white;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);padding:24px;margin-bottom:24px;">
+            <h2 style="font-size:20px;font-weight:bold;color:#111827;margin-bottom:16px;">👥 従業員マスター</h2>
+            <div style="max-height:400px;overflow-y:auto;margin-bottom:16px;">
+                <table style="width:100%;border-collapse:collapse;">
+                    <thead><tr style="background:#f3f4f6;">
+                        <th style="padding:12px;text-align:left;border-bottom:1px solid #e5e7eb;font-weight:600;">部署</th>
+                        <th style="padding:12px;text-align:left;border-bottom:1px solid #e5e7eb;font-weight:600;">従業員名</th>
+                        <th style="padding:12px;text-align:center;border-bottom:1px solid #e5e7eb;font-weight:600;">操作</th>
+                    </tr></thead>
+                    <tbody>
+                        ${app.employees.map((e, idx) => {
+                            const dept = app.departments.find(d => d.id === e.dept);
+                            return `<tr style="border-bottom:1px solid #e5e7eb;">
+                                <td style="padding:12px;font-weight:500;">${dept ? dept.name : e.dept}</td>
+                                <td style="padding:12px;">${e.name}</td>
+                                <td style="padding:12px;text-align:center;"><button onclick="deleteEmp(${idx})" style="background:#dc2626;color:white;padding:6px 12px;border-radius:4px;border:none;cursor:pointer;font-size:14px;">🗑️</button></td>
+                            </tr>`;
+                        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+            <div style="display:grid;gap:12px;">
+                <input type="text" id="newEmpName" placeholder="従業員名" style="padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;">
+                <select id="newEmpDept" style="padding:10px 12px;border:1px solid #d1d5db;border-radius:6px;">
+                    <option value="">部署を選択</option>
+                    ${app.departments.map(d => `<option value="${d.id}">${d.name}</option>`).join('')}
+                </select>
+                <button onclick="addEmp()" style="background:#16a34a;color:white;font-weight:600;padding:10px;border-radius:6px;border:none;cursor:pointer;">➕ 追加</button>
+            </div>
+        </div>
+
+        <!-- 5. 係長・係長代理マスター -->
+        <div style="background:#fef3c7;border:2px solid #f59e0b;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);padding:24px;margin-bottom:24px;">
+            <h2 style="font-size:20px;font-weight:bold;color:#92400e;margin-bottom:16px;">⭐ 係長・係長代理マスター</h2>
+            <div style="margin-bottom:16px;">
+                <h3 style="color:#92400e;margin-bottom:12px;">新規追加</h3>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr auto;gap:12px;align-items:end;">
+                    <div>
+                        <label style="font-size:13px;color:#374151;display:block;margin-bottom:4px;">氏名</label>
+                        <input type="text" id="newKakaricyoName" placeholder="例：山田 太郎" style="width:100%;padding:10px;border:1px solid #d1d5db;border-radius:6px;">
+                    </div>
+                    <div>
+                        <label style="font-size:13px;color:#374151;display:block;margin-bottom:4px;">役職</label>
+                        <select id="newKakaricyoRole" style="width:100%;padding:10px;border:1px solid #d1d5db;border-radius:6px;">
+                            <option value="係長">係長</option>
+                            <option value="係長代理">係長代理</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label style="font-size:13px;color:#374151;display:block;margin-bottom:4px;">部署</label>
+                        <select id="newKakaricyoDept" style="width:100%;padding:10px;border:1px solid #d1d5db;border-radius:6px;">
+                            <option value="">選択</option>
+                            ${app.departments.map(d => `<option value="${d.id}">${d.name}</option>`).join('')}
+                        </select>
+                    </div>
+                    <button onclick="addKakaricyo()" style="padding:10px 20px;background:#f59e0b;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;">追加</button>
+                </div>
+            </div>
+            <div style="max-height:300px;overflow-y:auto;margin-bottom:0;">
+            <table style="width:100%;border-collapse:collapse;">
+                <thead><tr style="background:#fde68a;">
+                    <th style="padding:10px;text-align:left;border-bottom:2px solid #f59e0b;">氏名</th>
+                    <th style="padding:10px;text-align:left;border-bottom:2px solid #f59e0b;">役職</th>
+                    <th style="padding:10px;text-align:left;border-bottom:2px solid #f59e0b;">部署</th>
+                    <th style="padding:10px;text-align:center;border-bottom:2px solid #f59e0b;">操作</th>
+                </tr></thead>
+                <tbody>
+                ${app.kakaricyoEmployees.length === 0 ? '<tr><td colspan="4" style="padding:16px;text-align:center;color:#999;">登録なし</td></tr>' :
+                app.kakaricyoEmployees.map((e, idx) => {
+                    const dept = app.departments.find(d => d.id === e.dept);
+                    return `<tr style="border-bottom:1px solid #fde68a;">
+                        <td style="padding:10px;">${e.name}</td>
+                        <td style="padding:10px;"><span style="background:#fef3c7;border:1px solid #f59e0b;padding:2px 8px;border-radius:10px;font-size:13px;">${e.role}</span></td>
+                        <td style="padding:10px;font-size:13px;color:#374151;">${dept ? dept.name : '未設定'}</td>
+                        <td style="padding:10px;text-align:center;"><button onclick="deleteKakaricyo(${idx})" style="background:#dc2626;color:white;padding:4px 12px;border-radius:4px;border:none;cursor:pointer;font-size:13px;">削除</button></td>
+                    </tr>`;
+                }).join('')}
+                </tbody>
+            </table>
+            </div>
+        </div>
+
+        <!-- 7. 評価基準マスター -->
+                            <tr style="background:#f3f4f6;">
+                                <th style="padding:12px;text-align:left;border-bottom:1px solid #d1d5db;font-weight:600;">ユーザー名</th>
+                                <th style="padding:12px;text-align:left;border-bottom:1px solid #d1d5db;font-weight:600;">ID</th>
+                                <th style="padding:12px;text-align:left;border-bottom:1px solid #d1d5db;font-weight:600;">パスワード</th>
+                                <th style="padding:12px;text-align:center;border-bottom:1px solid #d1d5db;font-weight:600;">操作</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${app.users.map((u,idx)=>`<tr style="border-bottom:1px solid #e5e7eb;">
+                                <td style="padding:12px;">${u.name}</td>
+                                <td style="padding:12px;"><code style="background:#f3f4f6;padding:4px 8px;border-radius:3px;">${u.userId}</code></td>
+                                <td style="padding:12px;"><code style="background:#f3f4f6;padding:4px 8px;border-radius:3px;">${u.password}</code></td>
+                                <td style="padding:12px;text-align:center;">
+                                    <button onclick="deleteUser(${idx})" style="padding:6px 12px;background:#dc2626;color:white;border:none;border-radius:4px;cursor:pointer;">削除</button>
+                                </td>
+                            </tr>`).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <div style="background:white;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);padding:24px;">
+            <h2 style="font-size:20px;font-weight:bold;color:#111827;margin-bottom:16px;">📈 評価基準マスター</h2>
+            <div style="margin-bottom:16px;">
+                <p style="color:#666;font-size:14px;">10の評価項目の基準を確認・編集できます</p>
+            </div>
+            <div style="max-height:600px;overflow-y:auto;margin-bottom:16px;">
+                ${app.items.map((item, idx) => `<div style="margin-bottom:16px;border:1px solid #e5e7eb;border-radius:6px;overflow:hidden;">
+                    <div style="padding:12px;background:#f3f4f6;cursor:pointer;font-weight:600;display:flex;justify-content:space-between;align-items:center;" onclick="toggleItemEdit(${item.id})">
+                        <span>${idx + 1}. ${item.name}</span>
+                        <span style="color:#9ca3af;font-size:12px;" id="toggle-${item.id}">▼</span>
+                    </div>
+                    <div style="display:none;padding:16px;" id="edit-${item.id}">
+                        ${[5,4,3,2,1].map(s => {
+                            const labels = ['完全達成','ほぼ達成','標準的','やや改善','大きく改善'];
+                            return `<div style="margin-bottom:12px;">
+                                <label style="display:block;font-size:12px;font-weight:600;color:#374151;margin-bottom:4px;">スコア${s}: ${labels[5-s]}</label>
+                                <textarea style="width:100%;padding:8px;border:1px solid #d1d5db;border-radius:4px;font-size:13px;font-family:inherit;resize:vertical;min-height:50px;" id="criteria-${item.id}-${s}" data-item-id="${item.id}" data-score="${s}">${item.c[s]}</textarea>
+                            </div>`;
+                        }).join('')}
+                    </div>
+                </div>`).join('')}
+            </div>
+            <button onclick="saveCriteria()" style="width:100%;background:#2563eb;color:white;font-weight:600;padding:12px;border-radius:6px;border:none;cursor:pointer;">💾 評価基準を保存</button>
+        </div>
+    </div>`;
+}
+
+function addDept() {
+    const name = document.getElementById('newDeptName').value;
+    const max = parseInt(document.getElementById('newDeptMax').value);
+    if (!name.trim()) { alert('部署名を入力してください'); return; }
+    app.departments.push({ id: `d${Date.now()}`, name, maxWinners: max });
+    app.save();
+    document.getElementById('newDeptName').value = '';
+    document.getElementById('newDeptMax').value = '1';
+    render();
+}
+
+function deleteDept(idx) {
+    if (confirm('削除してもよろしいですか？')) {
+        app.departments.splice(idx, 1);
+        app.save();
+        render();
+    }
+}
+
+function addKakaricyo() {
+    const name = document.getElementById('newKakaricyoName').value.trim();
+    const role = document.getElementById('newKakaricyoRole').value;
+    const dept = document.getElementById('newKakaricyoDept').value;
+    if (!name) { alert('氏名を入力してください'); return; }
+    app.kakaricyoEmployees.push({ id: 'kk_' + Date.now(), name, role, dept });
+    app.save();
+    document.getElementById('newKakaricyoName').value = '';
+    render();
+}
+
+function deleteKakaricyo(idx) {
+    if (confirm('削除しますか？')) {
+        app.kakaricyoEmployees.splice(idx, 1);
+        app.save();
+        render();
+    }
+}
+
+function addEval() {
+    const name = document.getElementById('newEvaluator').value;
+    if (!name.trim()) { alert('評価者名を入力してください'); return; }
+    app.evaluators.push({ id: `ev_${Date.now()}`, name });
+    app.save();
+    document.getElementById('newEvaluator').value = '';
+    render();
+}
+
+function deleteEval(idx) {
+    if (confirm('削除してもよろしいですか？')) {
+        app.evaluators.splice(idx, 1);
+        app.save();
+        render();
+    }
+}
+
+function addEmp() {
+    const name = document.getElementById('newEmpName').value;
+    const dept = document.getElementById('newEmpDept').value;
+    if (!name.trim() || !dept) { alert('すべて入力してください'); return; }
+    app.employees.push({ id: `emp_${Date.now()}`, name, dept });
+    app.save();
+    document.getElementById('newEmpName').value = '';
+    document.getElementById('newEmpDept').value = '';
+    render();
+}
+
+function deleteEmp(idx) {
+    if (confirm('削除してもよろしいですか？')) {
+        app.employees.splice(idx, 1);
+        app.save();
+        render();
+    }
+}
+
+function showEmpDetail(empId) {
+    const emp = app.employees.find(e => e.id === empId);
+    const evals = app.evaluations.filter(e => e.targetEmployeeId === empId && e.periodId === app.period);
+    document.getElementById('modalContent').innerHTML = `
+        <h2 style="font-size:22px;font-weight:bold;color:#111827;margin-bottom:4px;">${emp.name}</h2>
+        <p style="font-size:13px;color:#999;margin-bottom:16px;">評価件数: ${evals.length}件</p>
+        ${evals.length === 0 ? '<p style="color:#666;">評価なし</p>' : evals.map((e) => {
+            const evaluator = app.evaluators.find(ev => ev.id === e.evaluatorId);
+            const scores = Object.values(e.scores);
+            const avg = (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(2);
+            const evalIndex = app.evaluations.indexOf(e);
+            const itemScores = Object.entries(e.scores).map(([itemId, score]) => {
+                const item = app.items.find(i => i.id === parseInt(itemId));
+                return '<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid #e5e7eb;"><span style="font-size:13px;color:#374151;">' + (item ? item.name : '項目'+itemId) + '</span><span style="font-size:14px;font-weight:bold;color:' + (score>=4?'#059669':score>=3?'#2563eb':'#dc2626') + ';">' + score + '点</span></div>';
+            }).join('');
+            return '<div style="background:#f9fafb;padding:14px;border-radius:8px;margin-bottom:14px;border:1px solid #e5e7eb;"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;"><div><p style="font-size:13px;color:#666;">評価者: <strong>' + (evaluator?.name||'不明') + '</strong> | ' + new Date(e.timestamp).toLocaleDateString('ja-JP') + '</p><p style="font-size:16px;font-weight:bold;color:#2563eb;margin-top:4px;">平均: ' + avg + '点</p></div><button onclick="deleteEvaluation(' + evalIndex + ',\'' + e.id + '\')" style="background:#dc2626;color:white;padding:6px 12px;border-radius:6px;border:none;cursor:pointer;font-size:12px;">🗑️ 削除</button></div><div style="margin-bottom:10px;">' + itemScores + '</div>' + (e.comment ? '<p style="font-size:13px;color:#555;margin-top:8px;padding:8px;background:white;border-radius:4px;border-left:3px solid #2563eb;">💬 ' + e.comment + '</p>' : '') + '</div>';
+        }).join('')}
+        <button onclick="document.getElementById('modal').style.display='none';" style="width:100%;background:#6b7280;color:white;padding:10px;border-radius:6px;border:none;cursor:pointer;margin-top:8px;">閉じる</button>
+    `;
+    document.getElementById('modal').style.display = 'flex';
+}
+
+async function deleteEvaluation(idx, evalId) {
+    if (!confirm('この評価を削除しますか？')) return;
+    if (supabase && evalId && String(evalId).startsWith('sb_')) {
+        const numId = String(evalId).replace('sb_', '');
+        await supabase.from('evaluations').delete().eq('id', numId);
+    }
+    app.evaluations.splice(idx, 1);
+    app.save();
+    document.getElementById('modal').style.display = 'none';
+    render();
+}
+
+async function deleteAllEvaluations() {
+    if (!confirm('現在の期間の評価データをすべて削除しますか？\nこの操作は元に戻せません。')) return;
+    if (supabase) {
+        await supabase.from('evaluations').delete().eq('period_id', app.period);
+    }
+    app.evaluations = app.evaluations.filter(e => e.periodId !== app.period);
+    app.save();
+    render();
+}
+
+
+
+function changePeriodEval(periodId) {
+    app.period = periodId;
+    app.selectedScores = {};
+    render();
+}
+
+function changePeriodResults(periodId) {
+    app.period = periodId;
+    render();
+}
+
+function toggleItemEdit(itemId) {
+    const el = document.getElementById(`edit-${itemId}`);
+    const toggle = document.getElementById(`toggle-${itemId}`);
+    if (el) {
+        if (el.style.display === 'none') {
+            el.style.display = 'block';
+            toggle.textContent = '▲';
+        } else {
+            el.style.display = 'none';
+            toggle.textContent = '▼';
+        }
+    }
+}
+
+function saveCriteria() {
+    document.querySelectorAll('textarea[data-item-id]').forEach(ta => {
+        const itemId = parseInt(ta.getAttribute('data-item-id'));
+        const score = parseInt(ta.getAttribute('data-score'));
+        const item = app.items.find(i => i.id === itemId);
+        if (item) {
+            item.c[score] = ta.value.trim();
+        }
+    });
+    app.save();
+    alert('評価基準を保存しました');
+    render();
+}
+
+
+
+function renderAnalysis() {
+    const p = app.periods.find(x => x.id === app.period);
+    const idx = app.periods.indexOf(p) + 1;
+    
+    const analysisMode = app.analysisMode || 'current';
+    
+    if (analysisMode === 'current') {
+        return renderAnalysisCurrent();
+    } else {
+        return renderAnalysisComparison();
+    }
+}
+
+function renderAnalysisCurrent() {
+    const p = app.periods.find(x => x.id === app.period);
+    const idx = app.periods.indexOf(p) + 1;
+    
+    // 現在の評価期間・モードの評価データを取得
+    const currentMode = app.evalMode || 'general';
+    const periodEvals = app.evaluations.filter(e => e.periodId === app.period && (e.evalMode || 'general') === currentMode);
+    
+    // 部署別の集計
+    const deptStats = {};
+    app.departments.forEach(d => {
+        deptStats[d.id] = {
+            name: d.name,
+            evals: [],
+            avgScore: 0,
+            count: 0
+        };
+    });
+    
+    periodEvals.forEach(eval => {
+        const emp = app.employees.find(e => e.id === eval.targetEmployeeId);
+        if (emp) {
+            const avgScore = Object.values(eval.scores).reduce((a, b) => a + b, 0) / 10;
+            if (!deptStats[emp.dept]) {
+                deptStats[emp.dept] = { name: emp.dept, evals: [], avgScore: 0, count: 0 };
+            }
+            deptStats[emp.dept].evals.push({ empId: eval.targetEmployeeId, score: avgScore });
+            deptStats[emp.dept].count++;
+        }
+    });
+    
+    // 平均スコア計算
+    Object.keys(deptStats).forEach(key => {
+        if (deptStats[key].evals.length > 0) {
+            deptStats[key].avgScore = (deptStats[key].evals.reduce((a, b) => a + b.score, 0) / deptStats[key].evals.length).toFixed(2);
+        }
+    });
+    
+    // 項目別平均
+    const itemAvgs = {};
+    app.items.forEach(item => {
+        const scores = periodEvals.map(e => e.scores[item.id] || 0).filter(s => s > 0);
+        itemAvgs[item.id] = scores.length > 0 ? (scores.reduce((a, b) => a + b) / scores.length).toFixed(2) : 0;
+    });
+    
+    const isKakaricyo = (app.evalMode || 'general') === 'kakaricyo';
+    return `<div style="padding:32px;max-width:1200px;">
+        <h1 style="font-size:32px;font-weight:bold;color:#111827;margin-bottom:16px;">📈 分析</h1>
+        <div style="background:${isKakaricyo?'#fef3c7':'#eff6ff'};border:2px solid ${isKakaricyo?'#f59e0b':'#3b82f6'};border-radius:8px;padding:10px 16px;margin-bottom:20px;font-weight:700;color:#374151;">${isKakaricyo?'⭐ 係長・係長代理モード':'👤 一般社員モード'}</div>
+        <div style="display:flex;gap:12px;margin-bottom:24px;">
+            <button onclick="app.analysisMode='current'; render();" style="padding:12px 24px;background:${app.analysisMode === 'current' ? '#2563eb' : '#e5e7eb'};color:${app.analysisMode === 'current' ? 'white' : '#374151'};border:none;border-radius:6px;cursor:pointer;font-weight:600;">📊 今期分析</button>
+            <button onclick="app.analysisMode='comparison'; render();" style="padding:12px 24px;background:${app.analysisMode === 'comparison' ? '#2563eb' : '#e5e7eb'};color:${app.analysisMode === 'comparison' ? 'white' : '#374151'};border:none;border-radius:6px;cursor:pointer;font-weight:600;">📊 過去との比較</button>
+        </div>
+
+        <div style="margin-bottom:16px;">
+            <label style="display:block;font-size:14px;font-weight:600;color:#374151;margin-bottom:8px;">評価期間</label>
+            <select id="analysisPeriod" style="padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;" onchange="changeAnalysisPeriod(this.value)">
+                ${app.periods.map((pd, i) => `<option value="${pd.id}" ${pd.id === app.period ? 'selected' : ''}>第${i+1}回 ${pd.name}</option>`).join('')}
+            </select>
+        </div>
+
+        <div style="background:white;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);padding:24px;margin-bottom:24px;">
+            <h2 style="font-size:20px;font-weight:bold;color:#111827;margin-bottom:16px;">📊 第${idx}回 ${p.name}</h2>
+            
+            <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:16px;margin-bottom:24px;">
+                <div style="padding:16px;background:#f0f9ff;border-radius:6px;border-left:4px solid #0ea5e9;">
+                    <p style="color:#0369a1;font-weight:600;font-size:14px;">評価件数</p>
+                    <p style="font-size:32px;font-weight:bold;color:#111827;margin-top:8px;">${periodEvals.length}</p>
+                </div>
+                <div style="padding:16px;background:#f0fdf4;border-radius:6px;border-left:4px solid #16a34a;">
+                    <p style="color:#166534;font-weight:600;font-size:14px;">評価対象者数</p>
+                    <p style="font-size:32px;font-weight:bold;color:#111827;margin-top:8px;">${new Set(periodEvals.map(e => e.targetEmployeeId)).size}</p>
+                </div>
+                <div style="padding:16px;background:#fdf2f8;border-radius:6px;border-left:4px solid #ec4899;">
+                    <p style="color:#be185d;font-weight:600;font-size:14px;">評価者数</p>
+                    <p style="font-size:32px;font-weight:bold;color:#111827;margin-top:8px;">${new Set(periodEvals.map(e => e.evaluatorId)).size}</p>
+                </div>
+            </div>
+
+            <div style="margin-bottom:24px;">
+                <h3 style="font-weight:600;color:#111827;margin-bottom:12px;">評価項目別平均スコア</h3>
+                <table style="width:100%;border-collapse:collapse;">
+                    <thead>
+                        <tr style="background:#f3f4f6;">
+                            <th style="padding:12px;text-align:left;border-bottom:1px solid #e5e7eb;font-weight:600;">評価項目</th>
+                            <th style="padding:12px;text-align:center;border-bottom:1px solid #e5e7eb;font-weight:600;">平均スコア</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${app.items.map(item => `<tr style="border-bottom:1px solid #e5e7eb;">
+                            <td style="padding:12px;">${item.name}</td>
+                            <td style="padding:12px;text-align:center;font-weight:600;color:#0369a1;">${itemAvgs[item.id]}</td>
+                        </tr>`).join('')}
+                    </tbody>
+                </table>
+            </div>
+
+            <div>
+                <h3 style="font-weight:600;color:#111827;margin-bottom:12px;">部署別集計</h3>
+                <table style="width:100%;border-collapse:collapse;">
+                    <thead>
+                        <tr style="background:#f3f4f6;">
+                            <th style="padding:12px;text-align:left;border-bottom:1px solid #e5e7eb;font-weight:600;">部署</th>
+                            <th style="padding:12px;text-align:center;border-bottom:1px solid #e5e7eb;font-weight:600;">評価件数</th>
+                            <th style="padding:12px;text-align:center;border-bottom:1px solid #e5e7eb;font-weight:600;">平均スコア</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${Object.keys(deptStats).map(key => {
+                            const stat = deptStats[key];
+                            return `<tr style="border-bottom:1px solid #e5e7eb;">
+                                <td style="padding:12px;">${stat.name}</td>
+                                <td style="padding:12px;text-align:center;">${stat.count}</td>
+                                <td style="padding:12px;text-align:center;font-weight:600;color:#0369a1;">${stat.avgScore}</td>
+                            </tr>`;
+                        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>`;
+}
+
+function renderAnalysisComparison() {
+    return `<div style="padding:32px;max-width:1200px;">
+        <h1 style="font-size:32px;font-weight:bold;color:#111827;margin-bottom:24px;">📈 分析</h1>
+        
+        <div style="display:flex;gap:12px;margin-bottom:24px;">
+            <button onclick="app.analysisMode='current'; render();" style="padding:12px 24px;background:${app.analysisMode === 'current' ? '#2563eb' : '#e5e7eb'};color:${app.analysisMode === 'current' ? 'white' : '#374151'};border:none;border-radius:6px;cursor:pointer;font-weight:600;">📊 今期分析</button>
+            <button onclick="app.analysisMode='comparison'; render();" style="padding:12px 24px;background:${app.analysisMode === 'comparison' ? '#2563eb' : '#e5e7eb'};color:${app.analysisMode === 'comparison' ? 'white' : '#374151'};border:none;border-radius:6px;cursor:pointer;font-weight:600;">📊 過去との比較</button>
+        </div>
+
+        <div style="background:white;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);padding:24px;">
+            <h2 style="font-size:20px;font-weight:bold;color:#111827;margin-bottom:16px;">📊 複数期間の比較分析</h2>
+            
+            <div style="margin-bottom:24px;">
+                <label style="display:block;font-size:14px;font-weight:600;color:#374151;margin-bottom:8px;">比較する期間を選択</label>
+                <div style="display:flex;gap:12px;margin-bottom:16px;">
+                    <select id="comparePeriod1" style="flex:1;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;">
+                        ${app.periods.map((pd, i) => `<option value="${pd.id}">第${i+1}回 ${pd.name}</option>`).join('')}
+                    </select>
+                    <div style="padding:8px 12px;display:flex;align-items:center;color:#666;">vs</div>
+                    <select id="comparePeriod2" style="flex:1;padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;">
+                        ${app.periods.map((pd, i) => `<option value="${pd.id}" ${i === app.periods.length - 1 ? 'selected' : ''}>${i === 0 ? '未実施' : `第${i+1}回 ${pd.name}`}</option>`).join('')}
+                    </select>
+                </div>
+                <button onclick="compareAnalysis()" style="padding:10px 20px;background:#2563eb;color:white;border:none;border-radius:6px;cursor:pointer;font-weight:600;">比較を実行</button>
+            </div>
+
+            <div id="comparisonResult" style="margin-top:24px;">
+                <p style="color:#666;text-align:center;padding:32px;">比較を実行してください</p>
+            </div>
+        </div>
+    </div>`;
+}
+
+function compareAnalysis() {
+    const period1 = document.getElementById('comparePeriod1').value;
+    const period2 = document.getElementById('comparePeriod2').value;
+    
+    if (period1 === period2) {
+        alert('異なる期間を選択してください');
+        return;
+    }
+    
+    const p1 = app.periods.find(x => x.id === period1);
+    const p2 = app.periods.find(x => x.id === period2);
+    const idx1 = app.periods.indexOf(p1) + 1;
+    const idx2 = app.periods.indexOf(p2) + 1;
+    
+    const evals1 = app.evaluations.filter(e => e.periodId === period1);
+    const evals2 = app.evaluations.filter(e => e.periodId === period2);
+    
+    // 項目別平均
+    const itemAvgs1 = {};
+    const itemAvgs2 = {};
+    
+    app.items.forEach(item => {
+        const scores1 = evals1.map(e => e.scores[item.id] || 0).filter(s => s > 0);
+        const scores2 = evals2.map(e => e.scores[item.id] || 0).filter(s => s > 0);
+        
+        itemAvgs1[item.id] = scores1.length > 0 ? (scores1.reduce((a, b) => a + b) / scores1.length).toFixed(2) : 0;
+        itemAvgs2[item.id] = scores2.length > 0 ? (scores2.reduce((a, b) => a + b) / scores2.length).toFixed(2) : 0;
+    });
+    
+    // 部署別統計
+    const deptStats1 = {};
+    const deptStats2 = {};
+    
+    app.departments.forEach(d => {
+        deptStats1[d.id] = { name: d.name, count: 0, avgScore: 0 };
+        deptStats2[d.id] = { name: d.name, count: 0, avgScore: 0 };
+    });
+    
+    evals1.forEach(eval => {
+        const emp = app.employees.find(e => e.id === eval.targetEmployeeId);
+        if (emp && deptStats1[emp.dept]) {
+            const score = Object.values(eval.scores).reduce((a, b) => a + b, 0) / 10;
+            deptStats1[emp.dept].count++;
+            deptStats1[emp.dept].avgScore += score;
+        }
+    });
+    
+    evals2.forEach(eval => {
+        const emp = app.employees.find(e => e.id === eval.targetEmployeeId);
+        if (emp && deptStats2[emp.dept]) {
+            const score = Object.values(eval.scores).reduce((a, b) => a + b, 0) / 10;
+            deptStats2[emp.dept].count++;
+            deptStats2[emp.dept].avgScore += score;
+        }
+    });
+    
+    Object.keys(deptStats1).forEach(key => {
+        if (deptStats1[key].count > 0) {
+            deptStats1[key].avgScore = (deptStats1[key].avgScore / deptStats1[key].count).toFixed(2);
+        }
+    });
+    
+    Object.keys(deptStats2).forEach(key => {
+        if (deptStats2[key].count > 0) {
+            deptStats2[key].avgScore = (deptStats2[key].avgScore / deptStats2[key].count).toFixed(2);
+        }
+    });
+    
+    const html = `<h3 style="font-weight:600;color:#111827;margin-bottom:16px;">第${idx1}回 ${p1.name} vs 第${idx2}回 ${p2.name}</h3>
+        
+        <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:16px;margin-bottom:24px;">
+            <div style="padding:16px;background:#f0f9ff;border-radius:6px;">
+                <p style="color:#0369a1;font-weight:600;font-size:12px;">評価件数</p>
+                <div style="display:flex;gap:16px;margin-top:8px;">
+                    <div><p style="color:#666;font-size:12px;">第${idx1}回</p><p style="font-size:24px;font-weight:bold;">${evals1.length}</p></div>
+                    <div><p style="color:#666;font-size:12px;">第${idx2}回</p><p style="font-size:24px;font-weight:bold;">${evals2.length}</p></div>
+                </div>
+            </div>
+            <div style="padding:16px;background:#f0fdf4;border-radius:6px;">
+                <p style="color:#166534;font-weight:600;font-size:12px;">対象者数</p>
+                <div style="display:flex;gap:16px;margin-top:8px;">
+                    <div><p style="color:#666;font-size:12px;">第${idx1}回</p><p style="font-size:24px;font-weight:bold;">${new Set(evals1.map(e => e.targetEmployeeId)).size}</p></div>
+                    <div><p style="color:#666;font-size:12px;">第${idx2}回</p><p style="font-size:24px;font-weight:bold;">${new Set(evals2.map(e => e.targetEmployeeId)).size}</p></div>
+                </div>
+            </div>
+            <div style="padding:16px;background:#fdf2f8;border-radius:6px;">
+                <p style="color:#be185d;font-weight:600;font-size:12px;">評価者数</p>
+                <div style="display:flex;gap:16px;margin-top:8px;">
+                    <div><p style="color:#666;font-size:12px;">第${idx1}回</p><p style="font-size:24px;font-weight:bold;">${new Set(evals1.map(e => e.evaluatorId)).size}</p></div>
+                    <div><p style="color:#666;font-size:12px;">第${idx2}回</p><p style="font-size:24px;font-weight:bold;">${new Set(evals2.map(e => e.evaluatorId)).size}</p></div>
+                </div>
+            </div>
+        </div>
+
+        <div style="margin-bottom:24px;">
+            <h3 style="font-weight:600;color:#111827;margin-bottom:12px;">評価項目別平均スコア比較</h3>
+            <table style="width:100%;border-collapse:collapse;">
+                <thead>
+                    <tr style="background:#f3f4f6;">
+                        <th style="padding:12px;text-align:left;border-bottom:1px solid #e5e7eb;font-weight:600;">評価項目</th>
+                        <th style="padding:12px;text-align:center;border-bottom:1px solid #e5e7eb;font-weight:600;">第${idx1}回</th>
+                        <th style="padding:12px;text-align:center;border-bottom:1px solid #e5e7eb;font-weight:600;">第${idx2}回</th>
+                        <th style="padding:12px;text-align:center;border-bottom:1px solid #e5e7eb;font-weight:600;">変化</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${app.items.map(item => {
+                        const val1 = parseFloat(itemAvgs1[item.id]) || 0;
+                        const val2 = parseFloat(itemAvgs2[item.id]) || 0;
+                        const change = (val2 - val1).toFixed(2);
+                        const changeColor = change > 0 ? '#16a34a' : change < 0 ? '#dc2626' : '#666';
+                        return `<tr style="border-bottom:1px solid #e5e7eb;">
+                            <td style="padding:12px;">${item.name}</td>
+                            <td style="padding:12px;text-align:center;font-weight:600;">${itemAvgs1[item.id]}</td>
+                            <td style="padding:12px;text-align:center;font-weight:600;">${itemAvgs2[item.id]}</td>
+                            <td style="padding:12px;text-align:center;font-weight:600;color:${changeColor};">${change > 0 ? '+' : ''}${change}</td>
+                        </tr>`;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>
+
+        <div>
+            <h3 style="font-weight:600;color:#111827;margin-bottom:12px;">部署別平均スコア比較</h3>
+            <table style="width:100%;border-collapse:collapse;">
+                <thead>
+                    <tr style="background:#f3f4f6;">
+                        <th style="padding:12px;text-align:left;border-bottom:1px solid #e5e7eb;font-weight:600;">部署</th>
+                        <th style="padding:12px;text-align:center;border-bottom:1px solid #e5e7eb;font-weight:600;">第${idx1}回</th>
+                        <th style="padding:12px;text-align:center;border-bottom:1px solid #e5e7eb;font-weight:600;">第${idx2}回</th>
+                        <th style="padding:12px;text-align:center;border-bottom:1px solid #e5e7eb;font-weight:600;">変化</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${Object.keys(deptStats1).map(key => {
+                        const stat1 = deptStats1[key];
+                        const stat2 = deptStats2[key];
+                        const change = (parseFloat(stat2.avgScore || 0) - parseFloat(stat1.avgScore || 0)).toFixed(2);
+                        const changeColor = change > 0 ? '#16a34a' : change < 0 ? '#dc2626' : '#666';
+                        return `<tr style="border-bottom:1px solid #e5e7eb;">
+                            <td style="padding:12px;">${stat1.name}</td>
+                            <td style="padding:12px;text-align:center;font-weight:600;">${stat1.avgScore || '-'}</td>
+                            <td style="padding:12px;text-align:center;font-weight:600;">${stat2.avgScore || '-'}</td>
+                            <td style="padding:12px;text-align:center;font-weight:600;color:${changeColor};">${change > 0 ? '+' : ''}${change}</td>
+                        </tr>`;
+                    }).join('')}
+                </tbody>
+            </table>
+        </div>`;
+    
+    document.getElementById('comparisonResult').innerHTML = html;
+}
+
+function changeAnalysisPeriod(periodId) {
+    app.period = periodId;
+    render();
+}
+
+function renderEmail() {
+    const p = app.periods.find(x => x.id === app.period);
+    const idx = app.periods.indexOf(p) + 1;
+    
+    // 現在の評価期間の結果を取得
+    const periodEvals = app.evaluations.filter(e => e.periodId === app.period);
+    
+    // 平均スコア計算
+    const empScores = {};
+    periodEvals.forEach(eval => {
+        const emp = app.employees.find(e => e.id === eval.targetEmployeeId);
+        if (emp) {
+            const avgScore = Object.values(eval.scores).reduce((a, b) => a + b, 0) / 10;
+            if (!empScores[eval.targetEmployeeId]) {
+                empScores[eval.targetEmployeeId] = {
+                    name: emp.name,
+                    dept: app.departments.find(d => d.id === emp.dept)?.name || emp.dept,
+                    score: 0,
+                    count: 0
+                };
+            }
+            empScores[eval.targetEmployeeId].score += avgScore;
+            empScores[eval.targetEmployeeId].count++;
+        }
+    });
+    
+    // 平均を計算
+    Object.keys(empScores).forEach(key => {
+        empScores[key].score = (empScores[key].score / empScores[key].count).toFixed(2);
+    });
+    
+    // スコア順にソート
+    const ranked = Object.values(empScores).sort((a, b) => b.score - a.score);
+    
+    // 部署別の受賞者決定
+    const deptWinners = {};
+    app.departments.forEach(d => {
+        deptWinners[d.id] = {
+            name: d.name,
+            maxWinners: d.maxWinners,
+            winners: []
+        };
+    });
+    
+    const empByDept = {};
+    ranked.forEach(emp => {
+        const deptId = app.employees.find(e => e.name === emp.name)?.dept;
+        if (deptId) {
+            if (!empByDept[deptId]) empByDept[deptId] = [];
+            empByDept[deptId].push(emp);
+        }
+    });
+    
+    // 各部署から上位を選出
+    Object.keys(empByDept).forEach(deptId => {
+        const maxWinners = app.departments.find(d => d.id === deptId)?.maxWinners || 1;
+        deptWinners[deptId].winners = empByDept[deptId].slice(0, maxWinners);
+    });
+    
+    const allWinners = Object.values(deptWinners).flatMap(d => d.winners);
+    
+    const emailText = `【MVP評価 第${idx}回 ${p.name}】受賞者のお知らせ
+
+受賞者一覧：
+${allWinners.map((w, i) => `${i+1}. ${w.name}（${w.dept}） スコア: ${w.score}`).join('\n')}
+
+詳細は以下をご参照ください：
+- 評価実施画面で詳細を確認できます
+- 今回の結果は分析画面で確認可能です
+`;
+    
+    return `<div style="padding:32px;max-width:1024px;">
+        <h1 style="font-size:32px;font-weight:bold;color:#111827;margin-bottom:32px;">📧 メール配信</h1>
+        
+        <div style="background:white;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);padding:24px;margin-bottom:24px;">
+            <h2 style="font-size:20px;font-weight:bold;color:#111827;margin-bottom:16px;">受賞者通知メール（第${idx}回 ${p.name}）</h2>
+            
+            <div style="margin-bottom:24px;">
+                <label style="display:block;font-size:14px;font-weight:600;color:#374151;margin-bottom:8px;">メール内容プレビュー</label>
+                <textarea style="width:100%;padding:16px;border:1px solid #d1d5db;border-radius:6px;font-family:monospace;font-size:12px;resize:vertical;min-height:300px;background:#f9fafb;" readonly>${emailText}</textarea>
+            </div>
+
+            <div style="margin-bottom:24px;">
+                <h3 style="font-weight:600;color:#111827;margin-bottom:12px;">📋 受賞者リスト</h3>
+                <table style="width:100%;border-collapse:collapse;">
+                    <thead>
+                        <tr style="background:#f3f4f6;">
+                            <th style="padding:12px;text-align:left;border-bottom:1px solid #e5e7eb;font-weight:600;">受賞者</th>
+                            <th style="padding:12px;text-align:left;border-bottom:1px solid #e5e7eb;font-weight:600;">部署</th>
+                            <th style="padding:12px;text-align:center;border-bottom:1px solid #e5e7eb;font-weight:600;">スコア</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${allWinners.map(w => `<tr style="border-bottom:1px solid #e5e7eb;background:#f0fdf4;">
+                            <td style="padding:12px;font-weight:600;">${w.name}</td>
+                            <td style="padding:12px;">${w.dept}</td>
+                            <td style="padding:12px;text-align:center;color:#0369a1;font-weight:600;">${w.score}</td>
+                        </tr>`).join('')}
+                    </tbody>
+                </table>
+            </div>
+
+            <button onclick="copyEmailText()" style="background:#3b82f6;color:white;font-weight:600;padding:12px 24px;border-radius:6px;border:none;cursor:pointer;margin-right:12px;">📋 メール内容をコピー</button>
+            <button onclick="downloadEmailCSV()" style="background:#16a34a;color:white;font-weight:600;padding:12px 24px;border-radius:6px;border:none;cursor:pointer;">💾 受賞者リスト（CSV）をダウンロード</button>
+        </div>
+    </div>`;
+}
+
+function copyEmailText() {
+    const p = app.periods.find(x => x.id === app.period);
+    const idx = app.periods.indexOf(p) + 1;
+    
+    const periodEvals = app.evaluations.filter(e => e.periodId === app.period);
+    const empScores = {};
+    periodEvals.forEach(eval => {
+        const emp = app.employees.find(e => e.id === eval.targetEmployeeId);
+        if (emp) {
+            const avgScore = Object.values(eval.scores).reduce((a, b) => a + b, 0) / 10;
+            if (!empScores[eval.targetEmployeeId]) {
+                empScores[eval.targetEmployeeId] = {
+                    name: emp.name,
+                    dept: app.departments.find(d => d.id === emp.dept)?.name || emp.dept,
+                    score: 0,
+                    count: 0
+                };
+            }
+            empScores[eval.targetEmployeeId].score += avgScore;
+            empScores[eval.targetEmployeeId].count++;
+        }
+    });
+    
+    Object.keys(empScores).forEach(key => {
+        empScores[key].score = (empScores[key].score / empScores[key].count).toFixed(2);
+    });
+    
+    const ranked = Object.values(empScores).sort((a, b) => b.score - a.score);
+    
+    const deptWinners = {};
+    app.departments.forEach(d => {
+        deptWinners[d.id] = { name: d.name, maxWinners: d.maxWinners, winners: [] };
+    });
+    
+    const empByDept = {};
+    ranked.forEach(emp => {
+        const deptId = app.employees.find(e => e.name === emp.name)?.dept;
+        if (deptId) {
+            if (!empByDept[deptId]) empByDept[deptId] = [];
+            empByDept[deptId].push(emp);
+        }
+    });
+    
+    Object.keys(empByDept).forEach(deptId => {
+        const maxWinners = app.departments.find(d => d.id === deptId)?.maxWinners || 1;
+        deptWinners[deptId].winners = empByDept[deptId].slice(0, maxWinners);
+    });
+    
+    const allWinners = Object.values(deptWinners).flatMap(d => d.winners);
+    
+    const text = `【MVP評価 第${idx}回 ${p.name}】受賞者のお知らせ
+
+受賞者一覧：
+${allWinners.map((w, i) => `${i+1}. ${w.name}（${w.dept}） スコア: ${w.score}`).join('\n')}
+
+詳細は以下をご参照ください：
+- 評価実施画面で詳細を確認できます
+- 今回の結果は分析画面で確認可能です`;
+    
+    navigator.clipboard.writeText(text).then(() => {
+        alert('メール内容をコピーしました');
+    });
+}
+
+function downloadEmailCSV() {
+    const p = app.periods.find(x => x.id === app.period);
+    const idx = app.periods.indexOf(p) + 1;
+    
+    const periodEvals = app.evaluations.filter(e => e.periodId === app.period);
+    const empScores = {};
+    periodEvals.forEach(eval => {
+        const emp = app.employees.find(e => e.id === eval.targetEmployeeId);
+        if (emp) {
+            const avgScore = Object.values(eval.scores).reduce((a, b) => a + b, 0) / 10;
+            if (!empScores[eval.targetEmployeeId]) {
+                empScores[eval.targetEmployeeId] = {
+                    name: emp.name,
+                    dept: app.departments.find(d => d.id === emp.dept)?.name || emp.dept,
+                    score: 0,
+                    count: 0
+                };
+            }
+            empScores[eval.targetEmployeeId].score += avgScore;
+            empScores[eval.targetEmployeeId].count++;
+        }
+    });
+    
+    Object.keys(empScores).forEach(key => {
+        empScores[key].score = (empScores[key].score / empScores[key].count).toFixed(2);
+    });
+    
+    const ranked = Object.values(empScores).sort((a, b) => b.score - a.score);
+    
+    const deptWinners = {};
+    app.departments.forEach(d => {
+        deptWinners[d.id] = { name: d.name, maxWinners: d.maxWinners, winners: [] };
+    });
+    
+    const empByDept = {};
+    ranked.forEach(emp => {
+        const deptId = app.employees.find(e => e.name === emp.name)?.dept;
+        if (deptId) {
+            if (!empByDept[deptId]) empByDept[deptId] = [];
+            empByDept[deptId].push(emp);
+        }
+    });
+    
+    Object.keys(empByDept).forEach(deptId => {
+        const maxWinners = app.departments.find(d => d.id === deptId)?.maxWinners || 1;
+        deptWinners[deptId].winners = empByDept[deptId].slice(0, maxWinners);
+    });
+    
+    const allWinners = Object.values(deptWinners).flatMap(d => d.winners);
+    
+    let csv = '受賞者名,部署,平均スコア\n';
+    allWinners.forEach(w => {
+        csv += `${w.name},${w.dept},${w.score}\n`;
+    });
+    
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.setAttribute('href', URL.createObjectURL(blob));
+    link.setAttribute('download', `MVP受賞者_第${idx}回.csv`);
+    link.click();
+}
+
+
+function handleExcelUpload(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            const data = new Uint8Array(e.target.result);
+            const workbook = XLSX.read(data, { type: 'array' });
+            
+            let empLoaded = 0;
+            let itemsLoaded = 0;
+            let deptLoaded = 0;
+            
+            // シート1: 従業員データ
+            if (workbook.SheetNames.length > 0) {
+                const worksheet1 = workbook.Sheets[workbook.SheetNames[0]];
+                const jsonData = XLSX.utils.sheet_to_json(worksheet1, { header: 1 });
+                const header = jsonData[2];
+                const dataRows = jsonData.slice(3);
+                const deptColIdx = header.findIndex(h => h === '部署');
+                const empNameColIdx = header.findIndex(h => h === '従業員名');
+                const deptMap = { '大垣①': 'ogaki1', '大垣②': 'ogaki2', '中央': 'central', '一般': 'general', '特殊': 'special', '間接・開発': 'indirect', '間接/開発': 'indirect', 'サイトー株': 'saitou' };
+                
+                const employees = [];
+                dataRows.forEach((row, idx) => {
+                    if (!row || row.length === 0) return;
+                    const dept = row[deptColIdx] ? String(row[deptColIdx]).trim() : '';
+                    const name = row[empNameColIdx] ? String(row[empNameColIdx]).trim() : '';
+                    if (name) {
+                        let deptId = deptMap[dept];
+                        if (!deptId) deptId = 'ogaki1';
+                        employees.push({ id: `e${Date.now()}_${idx}`, name, dept: deptId });
+                    }
+                });
+                
+                if (employees.length > 0) { 
+                    app.employees = employees; 
+                    empLoaded = employees.length;
+                }
+            }
+            
+            // シート2: 評価基準データ
+            if (workbook.SheetNames.length > 1) {
+                const worksheet2 = workbook.Sheets[workbook.SheetNames[1]];
+                const criteriaData = XLSX.utils.sheet_to_json(worksheet2, { header: 1 });
+                
+                if (criteriaData && criteriaData.length > 3) {
+                    let currentRow = 3;
+                    
+                    while (currentRow < criteriaData.length) {
+                        const rowData = criteriaData[currentRow];
+                        
+                        if (!rowData || !rowData[0]) break;
+                        
+                        const itemName = String(rowData[0]).trim();
+                        const matchedItem = app.items.find(item => item.name === itemName);
+                        
+                        if (matchedItem) {
+                            for (let i = 0; i < 5; i++) {
+                                const scoreRow = currentRow + i;
+                                const scoreData = criteriaData[scoreRow];
+                                
+                                if (scoreData && scoreData[1] && scoreData[2]) {
+                                    const scoreStr = String(scoreData[1]).trim();
+                                    const description = String(scoreData[2]).trim();
+                                    
+                                    const scoreMatch = scoreStr.match(/(\d)/);
+                                    if (scoreMatch && description) {
+                                        const score = parseInt(scoreMatch[1]);
+                                        matchedItem.c[score] = description;
+                                    }
+                                }
+                            }
+                            itemsLoaded++;
+                            currentRow += 5;
+                        } else {
+                            currentRow++;
+                        }
+                    }
+                }
+            }
+            
+            // シート3: 部署マスターデータ
+            if (workbook.SheetNames.length > 2) {
+                const worksheet3 = workbook.Sheets[workbook.SheetNames[2]];
+                const deptData = XLSX.utils.sheet_to_json(worksheet3, { header: 1 });
+                
+                if (deptData && deptData.length > 3) {
+                    // 行4から開始（ヘッダーは行3）
+                    for (let row = 3; row < deptData.length; row++) {
+                        const rowData = deptData[row];
+                        
+                        if (!rowData || !rowData[0]) break;
+                        
+                        const deptName = String(rowData[0]).trim();
+                        const maxWinnersStr = rowData[1] ? String(rowData[1]).trim() : '1';
+                        const maxWinners = parseInt(maxWinnersStr) || 1;
+                        
+                        // 既存の部署を更新、なければ追加
+                        const existingDept = app.departments.find(d => d.name === deptName);
+                        if (existingDept) {
+                            existingDept.maxWinners = maxWinners;
+                        } else {
+                            const deptId = deptName === '大垣①' ? 'ogaki1' : 
+                                         deptName === '大垣②' ? 'ogaki2' : 
+                                         deptName === '中央' ? 'central' : 
+                                         deptName === '一般' ? 'general' : 
+                                         deptName === '特殊' ? 'special' : 
+                                         deptName === '間接・開発' ? 'indirect' : 
+                                         deptName === 'サイトー株' ? 'saitou' : `d${Date.now()}`;
+                            app.departments.push({ id: deptId, name: deptName, maxWinners });
+                        }
+                        deptLoaded++;
+                    }
+                }
+            }
+            
+            app.save();
+            
+            let message = '';
+            if (empLoaded > 0) message += `👥 従業員: ${empLoaded}名
+`;
+            if (deptLoaded > 0) message += `🏢 部署: ${deptLoaded}部署
+`;
+            if (itemsLoaded > 0) message += `📝 評価基準: ${itemsLoaded}項目`;
+            
+            alert(message || 'インポート完了');
+            render();
+        } catch (err) {
+            console.error(err);
+            alert('インポートエラー: ' + err.message);
+        }
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+setTimeout(() => {
+    const sel = document.getElementById('periodSelectEval');
+    if (sel) {
+        sel.onchange = function() {
+            app.period = this.value;
+            app.selectedScores = {};
+            render();
+        };
+    }
+    const selRes = document.getElementById('periodSelectResults');
+    if (selRes) {
+        selRes.onchange = function() {
+            app.period = this.value;
+            render();
+        };
+    }
+    const analysisPeriod = document.getElementById('analysisPeriod');
+    if (analysisPeriod) {
+        analysisPeriod.onchange = function() {
+            app.period = this.value;
+            render();
+        };
+    }
+    const dept = document.getElementById('department');
+    if (dept) {
+        dept.onchange = function() {
+            updateTargetList();
+        };
+    }
+}, 50);
+
+render();
+</script>
+</body>
+</html>
